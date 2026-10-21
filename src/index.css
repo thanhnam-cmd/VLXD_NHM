@@ -1,0 +1,50 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --font-sans: 'Be Vietnam Pro', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    
+    /* NMH Brand Colors */
+    --nmh-navy: #152A55;
+    --nmh-navy-dark: #0D1A36;
+    --nmh-navy-light: #1E3A75;
+    --nmh-navy-soft: #EEF3FA;
+    --nmh-gold: #D4A017;
+    --nmh-gold-dark: #B8861B;
+    --nmh-gold-light: #F6E7B9;
+    --nmh-gold-soft: #FDF9EE;
+    --nmh-surface: #FFFFFF;
+    --nmh-bg: #F8FAFC;
+    --nmh-line: #E2E8F0;
+    --nmh-line-strong: #CBD5E1;
+  }
+
+  body {
+    font-family: var(--font-sans);
+    background-color: var(--nmh-bg);
+    color: #152338;
+    line-height: 1.5;
+  }
+}
+
+/* Custom scrollbar for data tables and blueprints */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #F1F5F9;
+}
+::-webkit-scrollbar-thumb {
+  background: #CBD5E1;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #94A3B8;
+}
+
+/* Smooth transitions */
+.transition-standard {
+  transition: all 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+}

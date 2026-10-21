@@ -1,0 +1,6 @@
+{
+  "name": "NMH Data Center Network - Quản Lý Dự Án & Phân Công Thi Công Điện Nhẹ",
+  "description": "Hệ thống quản lý dự án thi công hệ thống điện nhẹ (ELV), phân công nhân sự, kiểm soát xung đột lịch và quản lý hồ sơ kỹ thuật tập trung tại Công ty TNHH Đầu tư và Phát triển NMH.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
