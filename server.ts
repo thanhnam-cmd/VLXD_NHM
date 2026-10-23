@@ -124,12 +124,25 @@ app.post('/api/database/init', async (req, res) => {
     const client = await pool.connect();
 
     console.log('[PostgreSQL] Executing nmh_postgres_full.sql...');
-    // Chạy trong một giao dịch: lỗi ở bất kỳ câu lệnh nào thì không thay đổi gì
+    // Chạy trong một giao dịch: lỗi ở bất kỳ câu lệnh nào thì không thay đổi gì.
+    // Dữ liệu mẫu là dữ liệu lịch sử đã nhất quán (ví dụ phân công lập trước khi nhân sự nghỉ việc),
+    // nên các trigger nghiệp vụ do phiên bản cũ tạo được tạm tắt trong giao dịch nạp rồi bật lại trước khi COMMIT.
+    let disabledTriggers: string[] = [];
     try {
       await client.query('BEGIN');
+      const trg = await client.query(`
+        SELECT DISTINCT c.relname AS bang, t.tgname AS trigger
+        FROM pg_trigger t JOIN pg_class c ON t.tgrelid = c.oid JOIN pg_namespace n ON c.relnamespace = n.oid
+        WHERE NOT t.tgisinternal AND n.nspname = 'public'`);
+      const tables = Array.from(new Set(trg.rows.map((r: any) => r.bang as string)));
+      disabledTriggers = trg.rows.map((r: any) => `${r.bang}.${r.trigger}`);
+      for (const t of tables) await client.query(`ALTER TABLE "${t}" DISABLE TRIGGER USER`);
       await client.query(sqlContent);
+      for (const t of tables) await client.query(`ALTER TABLE "${t}" ENABLE TRIGGER USER`);
       await client.query('COMMIT');
+      if (disabledTriggers.length) console.log('[PostgreSQL] Seed loaded with user triggers temporarily disabled:', disabledTriggers.join(', '));
     } catch (err: any) {
+      if (err.where) err.message = `${err.message} | ${err.where}`;
       await client.query('ROLLBACK').catch(() => {});
       // Kèm định nghĩa ràng buộc bị vi phạm để thấy ngay nguyên nhân
       if (err.constraint) {
@@ -148,7 +161,8 @@ app.post('/api/database/init', async (req, res) => {
     console.log('[PostgreSQL] Database schema & seed data initialized successfully!');
     return res.json({
       success: true,
-      message: 'Đã khởi tạo thành công 22 bảng quan hệ và nạp đầy đủ dữ liệu thực tế từ nmh_postgres_full.sql vào PostgreSQL trên Render!'
+      message: 'Đã khởi tạo thành công 22 bảng quan hệ và nạp đầy đủ dữ liệu thực tế từ nmh_postgres_full.sql vào PostgreSQL trên Render!',
+      triggersTamTatKhiNap: disabledTriggers
     });
   } catch (err: any) {
     console.error('[PostgreSQL] Init SQL failed:', err);
