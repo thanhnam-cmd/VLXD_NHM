@@ -823,7 +823,8 @@ ON CONFLICT (khoa_cau_hinh) DO UPDATE SET gia_tri = EXCLUDED.gia_tri, mo_ta = EX
 -- =========================================================================
 
 -- View 1: v_cong_viec_qua_han (Quá hạn tại mốc tra cứu 12/10/2026 09:00)
-CREATE OR REPLACE VIEW v_cong_viec_qua_han AS
+DO $view$ BEGIN
+  CREATE OR REPLACE VIEW v_cong_viec_qua_han AS
 SELECT 
     cv.id AS cong_viec_id,
     cv.ma_cong_viec,
@@ -839,9 +840,13 @@ JOIN du_an d ON cv.du_an_id = d.id
 LEFT JOIN nhan_su ns ON cv.nhan_su_chinh_id = ns.id
 WHERE cv.trang_thai IN ('CHUA_BAT_DAU', 'DANG_THUC_HIEN')
   AND cv.ket_thuc_du_kien < '2026-10-12 09:00:00'::TIMESTAMP;
+EXCEPTION WHEN others THEN
+  RAISE NOTICE 'Giữ nguyên view v_cong_viec_qua_han hiện có: %', SQLERRM;
+END $view$;
 
 -- View 2: v_cong_viec_sap_den_han (Trong vòng 7 ngày kể từ 12/10/2026 09:00)
-CREATE OR REPLACE VIEW v_cong_viec_sap_den_han AS
+DO $view$ BEGIN
+  CREATE OR REPLACE VIEW v_cong_viec_sap_den_han AS
 SELECT 
     cv.id AS cong_viec_id,
     cv.ma_cong_viec,
@@ -858,9 +863,13 @@ LEFT JOIN nhan_su ns ON cv.nhan_su_chinh_id = ns.id
 WHERE cv.trang_thai IN ('CHUA_BAT_DAU', 'DANG_THUC_HIEN')
   AND cv.ket_thuc_du_kien >= '2026-10-12 09:00:00'::TIMESTAMP
   AND cv.ket_thuc_du_kien <= '2026-10-19 09:00:00'::TIMESTAMP;
+EXCEPTION WHEN others THEN
+  RAISE NOTICE 'Giữ nguyên view v_cong_viec_sap_den_han hiện có: %', SQLERRM;
+END $view$;
 
 -- View 3: v_phan_cong_bi_anh_huong (Phân công trùng lịch nghỉ/bận - KB07: đúng 2 dòng #56 và #58)
-CREATE OR REPLACE VIEW v_phan_cong_bi_anh_huong AS
+DO $view$ BEGIN
+  CREATE OR REPLACE VIEW v_phan_cong_bi_anh_huong AS
 SELECT 
     pc.id AS phan_cong_id,
     pc.cong_viec_id,
@@ -885,3 +894,6 @@ WHERE pc.trang_thai = 'HIEU_LUC'
   AND lnb.trang_thai = 'HIEU_LUC'
   AND pc.thoi_diem_bat_dau < lnb.thoi_diem_ket_thuc
   AND lnb.thoi_diem_bat_dau < pc.thoi_diem_ket_thuc;
+EXCEPTION WHEN others THEN
+  RAISE NOTICE 'Giữ nguyên view v_phan_cong_bi_anh_huong hiện có: %', SQLERRM;
+END $view$;
