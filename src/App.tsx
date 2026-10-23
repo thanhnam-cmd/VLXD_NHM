@@ -70,12 +70,9 @@ const AppShell: React.FC = () => {
       const status = await dbService.getDatabaseStatus();
       setDbStatus(status);
       if (status.connected && status.hasCoreTables) {
-        const [projects, tasks, staffRows, asg, lv, wl, docs, accs] = await Promise.all([
-          dbService.fetchProjectsFromDB(), dbService.fetchTasksFromDB(), dbService.fetchStaffFromDB(),
-          dbService.fetchAssignmentsFromDB(), dbService.fetchLeavesFromDB(), dbService.fetchWorkLogsFromDB(),
-          dbService.fetchDocsFromDB(), dbService.fetchAccountsFromDB()
-        ]);
-        store.loadFromDatabase({ projects, tasks, staff: staffRows, assignments: asg, leaves: lv, workLogs: wl, docs, accounts: accs });
+        // Dữ liệu thật: nạp toàn bộ từ PostgreSQL; từ đây mọi thay đổi được ghi về CSDL
+        const data = await dbService.bootstrap();
+        if (data) store.loadFromDatabase(data);
       }
     } catch (err) {
       console.warn('Database status check failed:', err);
@@ -271,6 +268,9 @@ const AppShell: React.FC = () => {
         </div>
 
         <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-[1600px] w-full mx-auto pb-24 md:pb-8">
+          {store.syncError && (
+            <div className="mb-4 p-3 rounded-xl bg-red-50 border border-red-200 text-red-700 text-xs font-semibold">{store.syncError}</div>
+          )}
           {renderMain()}
         </main>
       </div>

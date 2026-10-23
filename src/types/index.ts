@@ -23,6 +23,7 @@ export interface UserAccount {
   lockedAt?: string;
   createdAt?: string;
   mustChangePassword?: boolean;
+  passwordResetAt?: string;
 }
 
 export type StaffRoleTitle = 

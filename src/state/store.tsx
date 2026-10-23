@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   Project,
   Task,
@@ -127,10 +127,15 @@ const useStoreState = () => {
     localStorage.setItem('nmh_logged_user', JSON.stringify(n));
   };
 
-  const loadFromDatabase = (data: {
-    projects?: Project[] | null; tasks?: Task[] | null; staff?: Staff[] | null; assignments?: Assignment[] | null;
-    leaves?: StaffLeave[] | null; workLogs?: WorkLog[] | null; docs?: TechDoc[] | null; accounts?: UserAccount[] | null;
-  }) => {
+  // ---------- Chế độ CSDL PostgreSQL thật ----------
+  const [dbMode, setDbMode] = useState(false);
+  const [syncError, setSyncError] = useState<string | null>(null);
+  const snapshots = useRef<Record<string, Map<string, string>>>({});
+  const pendingPasswords = useRef<Record<string, string>>({});
+
+  /** Thay dữ liệu cục bộ bằng dữ liệu đọc từ PostgreSQL (GET /api/bootstrap) */
+  const loadFromDatabase = (data: Record<string, any>) => {
+    snapshots.current = {};
     if (data.projects) setProjects(data.projects.map(normalizeProject));
     if (data.tasks) setTasks(data.tasks.map(normalizeTask));
     if (data.staff) setStaff(data.staff);
@@ -139,7 +144,60 @@ const useStoreState = () => {
     if (data.workLogs) setWorkLogs(data.workLogs);
     if (data.docs) setDocs(data.docs);
     if (data.accounts) setAccounts(data.accounts.map(normalizeAccount));
+    if (data.categories) setCategories(data.categories);
+    if (data.customers) setCustomers(data.customers);
+    if (data.subcontractors) setSubcontractors(data.subcontractors);
+    if (data.externalAssignments) setExternalAssignments(data.externalAssignments);
+    if (data.auditLogs) setAuditLogs(data.auditLogs);
+    if (data.config) setConfig(prev => ({ ...prev, ...data.config, updatedAt: { ...(prev.updatedAt || {}), ...(data.config.updatedAt || {}) } }));
+    setDbMode(true);
   };
+
+  /**
+   * Sau khi nạp từ CSDL, mỗi lần dữ liệu đổi sẽ gửi các bản ghi vừa thêm/sửa lên máy chủ (POST /api/sync/:entity).
+   * Lần chạy đầu chỉ ghi nhớ trạng thái vừa nạp, không gửi lại.
+   */
+  const useDbSync = (entity: string, rows: { id: string }[]) => {
+    useEffect(() => {
+      if (!dbMode) return;
+      const snap = snapshots.current[entity];
+      if (!snap) {
+        snapshots.current[entity] = new Map(rows.map(r => [r.id, JSON.stringify(r)]));
+        return;
+      }
+      const changed = rows.filter(r => snap.get(r.id) !== JSON.stringify(r));
+      if (changed.length === 0) return;
+      changed.forEach(r => snap.set(r.id, JSON.stringify(r)));
+      const payload = entity === 'accounts'
+        ? changed.map(r => (pendingPasswords.current[r.id] ? { ...r, _password: pendingPasswords.current[r.id] } : r))
+        : changed;
+      dbService.syncEntity(entity, payload, currentUser.username).then(res => {
+        if (!res.success) {
+          setSyncError(`Không lưu được vào CSDL (${entity}): ${res.error || 'lỗi kết nối'}`);
+          changed.forEach(r => snap.delete(r.id));
+          return;
+        }
+        setSyncError(null);
+        if (entity === 'accounts') changed.forEach(r => { delete pendingPasswords.current[r.id]; });
+      });
+    }, [rows, dbMode]);
+  };
+
+  useDbSync('customers', customers);
+  useDbSync('staff', staff);
+  useDbSync('accounts', accounts);
+  useDbSync('projects', projects);
+  useDbSync('categories', categories);
+  useDbSync('tasks', tasks);
+  useDbSync('assignments', assignments);
+  useDbSync('leaves', leaves);
+  useDbSync('subcontractors', subcontractors);
+  useDbSync('externalAssignments', externalAssignments);
+  useDbSync('workLogs', workLogs);
+  useDbSync('docs', docs);
+  useDbSync('auditLogs', auditLogs);
+  const configRows = useMemo(() => [{ ...config, id: 'config' }], [config]);
+  useDbSync('config', configRows);
 
   const actor = () => currentUser.username || currentUser.name;
   const actorName = () => currentUser.name;
@@ -453,7 +511,7 @@ const useStoreState = () => {
       const p = projects.find(x => x.id === t.projectId)!;
       const s = staff.find(x => x.id === it.staffId)!;
       created.push({
-        id: newId() + created.length,
+        id: newId(),
         taskId: t.id, taskCode: t.code, taskName: t.title,
         projectId: p.id, projectCode: p.code,
         staffId: s.id, staffName: s.name,
@@ -703,7 +761,7 @@ const useStoreState = () => {
         isSelectedForExecution: false
       };
       return {
-        id: newId() + i,
+        id: newId(),
         projectId: base.projectId,
         projectCode: p?.code,
         taskId: base.taskId,
@@ -818,6 +876,7 @@ const useStoreState = () => {
       id: newId(), username, name: data.name.trim(), role: data.role, staffId: data.staffId || undefined,
       isActive: true, assignedProjectIds: projectIds, scopeGrants: grants, createdAt: nowDb(), mustChangePassword: true
     };
+    pendingPasswords.current[created.id] = data.password;
     setAccounts(prev => [created, ...prev]);
     logAudit('TAO_MOI', 'Tài khoản', created.id, undefined, null, { ten_dang_nhap: username, vai_tro: data.role, nhan_su_id: data.staffId || null });
     return ok(`Đã cấp tài khoản cho ${created.name}.`, created);
@@ -844,7 +903,9 @@ const useStoreState = () => {
   const resetPassword = (id: string, password: string): OpResult => {
     if (!/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).{8,}$/.test(password)) return fail('Mật khẩu cần tối thiểu 8 ký tự, gồm chữ hoa, chữ thường và chữ số.');
     const a = accounts.find(x => x.id === id);
-    setAccounts(prev => prev.map(x => x.id === id ? { ...x, mustChangePassword: true } : x));
+    pendingPasswords.current[id] = password;
+    // Đổi một trường để bản ghi tài khoản được gửi lại kèm mật khẩu mới (máy chủ chỉ lưu dạng băm)
+    setAccounts(prev => prev.map(x => x.id === id ? { ...x, mustChangePassword: true, passwordResetAt: nowDb() } : x));
     logAudit('DIEU_CHINH', 'Tài khoản', id, 'Đặt lại mật khẩu; thu hồi các phiên đang đăng nhập', null, { dat_lai_mat_khau: true });
     return ok(`Đã đặt lại mật khẩu cho ${a?.name}.`);
   };
@@ -914,7 +975,7 @@ const useStoreState = () => {
     subcontractors, externalAssignments, auditLogs, currentUser, role,
     visibleProjects, visibleProjectIds, scoped,
     // tiện ích
-    setCurrentUser, loadFromDatabase, findConflicts, getAffectedAssignments, isTaskAssignedToMe, queryTime,
+    dbMode, syncError, setCurrentUser, loadFromDatabase, findConflicts, getAffectedAssignments, isTaskAssignedToMe, queryTime,
     // nghiệp vụ
     addCustomer, createProject, updateProject, changeProjectStatus,
     saveCategory, saveTask, changeTaskStatus,

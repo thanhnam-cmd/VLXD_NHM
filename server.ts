@@ -4,15 +4,16 @@ import path from 'path';
 import fs from 'fs';
 import dotenv from 'dotenv';
 import pg from 'pg';
+import { bootstrap, syncEntity, ensureSchemaExtensions, verifyPassword, setPassword } from './server-db.ts';
 
 dotenv.config();
 
 const app = express();
 const isProd = process.env.NODE_ENV === 'production';
-const PORT = !isProd ? 3000 : (process.env.PORT ? parseInt(process.env.PORT, 10) : 3000);
+const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 const distPath = path.resolve(process.cwd(), 'dist');
 
-app.use(express.json());
+app.use(express.json({ limit: '60mb' }));
 
 // Initialize PostgreSQL Pool if DATABASE_URL is configured (e.g. on Render)
 const databaseUrl = process.env.DATABASE_URL;
@@ -118,6 +119,7 @@ app.post('/api/database/init', async (req, res) => {
     await client.query(sqlContent);
     client.release();
 
+    await ensureSchemaExtensions(pool);
     console.log('[PostgreSQL] Database schema & seed data initialized successfully!');
     return res.json({
       success: true,
@@ -133,305 +135,28 @@ app.post('/api/database/init', async (req, res) => {
   }
 });
 
-// 3. API Projects
-app.get('/api/projects', async (req, res) => {
+// 3. Nạp toàn bộ dữ liệu nghiệp vụ từ PostgreSQL cho giao diện
+app.get('/api/bootstrap', async (req, res) => {
   if (!pool) return res.json({ useClientStorage: true });
-
   try {
-    const { rows } = await pool.query(`
-      SELECT 
-        d.id::text,
-        d.ma_du_an as code,
-        d.ten as name,
-        d.khach_hang_id::text as "clientId",
-        kh.ten as "clientName",
-        kh.ten as "client",
-        d.dia_diem_thi_cong as place,
-        d.mo_ta_pham_vi as "scopeSummary",
-        TO_CHAR(d.ngay_bat_dau_du_kien, 'YYYY-MM-DD') as "startDate",
-        TO_CHAR(d.ngay_ket_thuc_du_kien, 'YYYY-MM-DD') as "dueDate",
-        d.trang_thai as status,
-        d.nhan_su_phu_trach_id::text as "managerId",
-        ns.ho_ten as "managerName",
-        d.dien_tich_san_xay_dung as "totalFloorArea",
-        TO_CHAR(d.thoi_diem_hoan_thanh, 'YYYY-MM-DD') as "completedAt",
-        TO_CHAR(d.thoi_diem_huy, 'YYYY-MM-DD') as "cancelledAt",
-        d.ly_do_huy as "cancelReason"
-      FROM du_an d
-      LEFT JOIN khach_hang kh ON d.khach_hang_id = kh.id
-      LEFT JOIN nhan_su ns ON d.nhan_su_phu_trach_id = ns.id
-      ORDER BY d.id ASC;
-    `);
-    return res.json(rows);
+    return res.json(await bootstrap(pool));
   } catch (err: any) {
-    console.error('[API] /api/projects error:', err.message);
-    return res.json({ useClientStorage: true, error: err.message });
+    console.error('[API] /api/bootstrap error:', err.message);
+    return res.status(500).json({ useClientStorage: true, error: err.message });
   }
 });
 
-app.post('/api/projects', async (req, res) => {
-  if (!pool) return res.status(200).json({ status: 'client_saved', data: req.body });
-
-  const { code, name, place, scopeSummary, startDate, dueDate, status, managerId, totalFloorArea } = req.body;
+// 4. Ghi các bản ghi vừa thay đổi (thêm mới hoặc cập nhật; không xóa dữ liệu nghiệp vụ – QC-08)
+app.post('/api/sync/:entity', async (req, res) => {
+  if (!pool) return res.json({ status: 'client_saved' });
+  const { rows, actor } = req.body || {};
+  if (!Array.isArray(rows)) return res.status(400).json({ error: 'Thiếu danh sách bản ghi.' });
   try {
-    const result = await pool.query(`
-      INSERT INTO du_an (
-        ma_du_an, ten, dia_diem_thi_cong, mo_ta_pham_vi, 
-        ngay_bat_dau_du_kien, ngay_ket_thuc_du_kien, trang_thai, 
-        nhan_su_phu_trach_id, dien_tich_san_xay_dung, nguoi_tao_id
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 1)
-      RETURNING id::text, ma_du_an as code, ten as name;
-    `, [code, name, place, scopeSummary, startDate, dueDate, status || 'LAP_KE_HOACH', managerId ? parseInt(managerId, 10) : null, totalFloorArea || null]);
-    
-    return res.status(201).json(result.rows[0]);
+    await syncEntity(pool, req.params.entity, rows, actor);
+    return res.json({ success: true, count: rows.length });
   } catch (err: any) {
-    console.error('[API] Create project error:', err.message);
-    return res.status(500).json({ error: err.message });
-  }
-});
-
-// 4. API Staff
-app.get('/api/staff', async (req, res) => {
-  if (!pool) return res.json({ useClientStorage: true });
-
-  try {
-    const { rows } = await pool.query(`
-      SELECT 
-        ns.id::text,
-        ns.ma_nhan_su as code,
-        ns.ho_ten as name,
-        ns.chuc_danh as "roleTitle",
-        ns.chuc_danh as "roleTitleDisplay",
-        ns.doi_id::text as "teamId",
-        dtc.ten as "teamName",
-        dtc.ten as "department",
-        ns.so_dien_thoai as phone,
-        ns.email,
-        COALESCE(
-          (SELECT string_agg(cm.ten, ', ') FROM nhan_su_chuyen_mon nscm JOIN chuyen_mon cm ON nscm.chuyen_mon_id = cm.id WHERE nscm.nhan_su_id = ns.id),
-          'Chưa phân loại'
-        ) as specialty,
-        (ns.trang_thai = 'DANG_LAM_VIEC') as "isActive",
-        TO_CHAR(ns.ngay_vao_lam, 'YYYY-MM-DD') as "startDate",
-        TO_CHAR(ns.ngay_ngung_lam_viec, 'YYYY-MM-DD') as "leaveDate",
-        ns.ghi_chu as notes
-      FROM nhan_su ns
-      LEFT JOIN doi_thi_cong dtc ON ns.doi_id = dtc.id
-      ORDER BY ns.id ASC;
-    `);
-    return res.json(rows);
-  } catch (err: any) {
-    console.error('[API] /api/staff error:', err.message);
-    return res.json({ useClientStorage: true, error: err.message });
-  }
-});
-
-// 5. API Tasks
-app.get('/api/tasks', async (req, res) => {
-  if (!pool) return res.json({ useClientStorage: true });
-
-  try {
-    const { rows } = await pool.query(`
-      SELECT 
-        c.id::text,
-        c.du_an_id::text as "projectId",
-        c.hang_muc_id::text as "categoryId",
-        hm.ten as "categoryName",
-        c.ma_cong_viec as code,
-        c.ten as name,
-        c.khu_vuc_trien_khai as location,
-        c.giai_doan as stage,
-        TO_CHAR(c.bat_dau_du_kien, 'YYYY-MM-DD') as "startDate",
-        TO_CHAR(c.ket_thuc_du_kien, 'YYYY-MM-DD') as "dueDate",
-        c.trang_thai as status,
-        c.nhan_su_chinh_id::text as "leadStaffId",
-        ns.ho_ten as "leadStaffName",
-        ARRAY(
-          SELECT pc.nhan_su_id::text 
-          FROM phan_cong pc 
-          WHERE pc.cong_viec_id = c.id AND pc.trang_thai = 'HIEU_LUC'
-        ) as "assignedStaffIds",
-        c.muc_do_uu_tien as priority,
-        c.ghi_chu as notes
-      FROM cong_viec c
-      LEFT JOIN hang_muc hm ON c.hang_muc_id = hm.id
-      LEFT JOIN nhan_su ns ON c.nhan_su_chinh_id = ns.id
-      ORDER BY c.id ASC;
-    `);
-    return res.json(rows);
-  } catch (err: any) {
-    console.error('[API] /api/tasks error:', err.message);
-    return res.json({ useClientStorage: true, error: err.message });
-  }
-});
-
-// 6. API Assignments
-app.get('/api/assignments', async (req, res) => {
-  if (!pool) return res.json({ useClientStorage: true });
-
-  try {
-    const { rows } = await pool.query(`
-      SELECT 
-        pc.id::text,
-        cv.du_an_id::text as "projectId",
-        pc.cong_viec_id::text as "taskId",
-        cv.ten as "taskName",
-        pc.nhan_su_id::text as "staffId",
-        ns.ho_ten as "staffName",
-        TO_CHAR(pc.thoi_diem_bat_dau, 'YYYY-MM-DD"T"HH24:MI:SS') as "startTime",
-        TO_CHAR(pc.thoi_diem_ket_thuc, 'YYYY-MM-DD"T"HH24:MI:SS') as "endTime",
-        CASE WHEN pc.trang_thai = 'HIEU_LUC' THEN 'active' ELSE 'cancelled' END as status,
-        pc.ghi_chu as notes,
-        TO_CHAR(pc.thoi_diem_tao, 'YYYY-MM-DD') as "assignedDate"
-      FROM phan_cong pc
-      JOIN cong_viec cv ON pc.cong_viec_id = cv.id
-      JOIN nhan_su ns ON pc.nhan_su_id = ns.id
-      ORDER BY pc.id DESC;
-    `);
-    return res.json(rows);
-  } catch (err: any) {
-    console.error('[API] /api/assignments error:', err.message);
-    return res.json({ useClientStorage: true, error: err.message });
-  }
-});
-
-app.post('/api/assignments', async (req, res) => {
-  if (!pool) return res.status(200).json({ status: 'client_saved', data: req.body });
-
-  const { taskId, staffId, startTime, endTime, notes } = req.body;
-  try {
-    const result = await pool.query(`
-      INSERT INTO phan_cong (
-        cong_viec_id, nhan_su_id, thoi_diem_bat_dau, thoi_diem_ket_thuc, 
-        trang_thai, ghi_chu, nguoi_tao_id
-      ) VALUES ($1, $2, $3, $4, 'HIEU_LUC', $5, 1)
-      RETURNING id::text;
-    `, [parseInt(taskId, 10), parseInt(staffId, 10), startTime, endTime, notes || '']);
-
-    return res.status(201).json(result.rows[0]);
-  } catch (err: any) {
-    console.error('[API] Create assignment error:', err.message);
-    return res.status(400).json({ error: err.message });
-  }
-});
-
-// 7. API Leaves
-app.get('/api/leaves', async (req, res) => {
-  if (!pool) return res.json({ useClientStorage: true });
-
-  try {
-    const { rows } = await pool.query(`
-      SELECT 
-        lnb.id::text,
-        lnb.nhan_su_id::text as "staffId",
-        ns.ho_ten as "staffName",
-        TO_CHAR(lnb.thoi_diem_bat_dau, 'YYYY-MM-DD"T"HH24:MI:SS') as "startDate",
-        TO_CHAR(lnb.thoi_diem_ket_thuc, 'YYYY-MM-DD"T"HH24:MI:SS') as "endDate",
-        lnb.ly_do as reason,
-        CASE WHEN lnb.trang_thai = 'HIEU_LUC' THEN 'approved' ELSE 'cancelled' END as status,
-        TO_CHAR(lnb.thoi_diem_tao, 'YYYY-MM-DD') as "createdAt"
-      FROM lich_nghi_ban lnb
-      JOIN nhan_su ns ON lnb.nhan_su_id = ns.id
-      ORDER BY lnb.id DESC;
-    `);
-    return res.json(rows);
-  } catch (err: any) {
-    console.error('[API] /api/leaves error:', err.message);
-    return res.json({ useClientStorage: true, error: err.message });
-  }
-});
-
-// 8. API Work Logs
-app.get('/api/worklogs', async (req, res) => {
-  if (!pool) return res.json({ useClientStorage: true });
-
-  try {
-    const { rows } = await pool.query(`
-      SELECT 
-        cn.id::text,
-        cn.cong_viec_id::text as "taskId",
-        cv.ten as "taskName",
-        cv.du_an_id::text as "projectId",
-        cn.nhan_su_id::text as "staffId",
-        ns.ho_ten as "staffName",
-        TO_CHAR(cn.thoi_diem_ghi_nhan, 'YYYY-MM-DD"T"HH24:MI:SS') as "date",
-        cn.khoi_luong_hoan_thanh as "workDone",
-        cn.phan_tram_tien_do as "progressPercentage",
-        cn.ghi_chu as notes,
-        cn.van_de_phat_sinh as issues
-      FROM cap_nhat_ket_qua cn
-      JOIN cong_viec cv ON cn.cong_viec_id = cv.id
-      JOIN nhan_su ns ON cn.nhan_su_id = ns.id
-      ORDER BY cn.id DESC;
-    `);
-    return res.json(rows);
-  } catch (err: any) {
-    console.error('[API] /api/worklogs error:', err.message);
-    return res.json({ useClientStorage: true, error: err.message });
-  }
-});
-
-// 9. API Technical Documents
-app.get('/api/docs', async (req, res) => {
-  if (!pool) return res.json({ useClientStorage: true });
-
-  try {
-    const { rows } = await pool.query(`
-      SELECT 
-        hs.id::text,
-        hs.du_an_id::text as "projectId",
-        d.ten as "projectName",
-        hs.cong_viec_id::text as "taskId",
-        cv.ten as "taskName",
-        hs.ma_ho_so as code,
-        hs.ten_ho_so as title,
-        hs.loai_ho_so as type,
-        hs.loai_ho_so as category,
-        hs.duong_dan_tep as "fileUrl",
-        hs.kich_thuoc_bytes as "fileSize",
-        hs.phien_ban::text as version,
-        hs.trang_thai as status,
-        TO_CHAR(hs.thoi_diem_tao, 'YYYY-MM-DD') as "uploadDate",
-        tk.ten_hien_thi as "uploadedByName"
-      FROM ho_so_ky_thuat hs
-      LEFT JOIN du_an d ON hs.du_an_id = d.id
-      LEFT JOIN cong_viec cv ON hs.cong_viec_id = cv.id
-      LEFT JOIN tai_khoan tk ON hs.nguoi_tao_id = tk.id
-      ORDER BY hs.id DESC;
-    `);
-    return res.json(rows);
-  } catch (err: any) {
-    console.error('[API] /api/docs error:', err.message);
-    return res.json({ useClientStorage: true, error: err.message });
-  }
-});
-
-// 10. API Accounts & Authentication
-app.get('/api/accounts', async (req, res) => {
-  if (!pool) return res.json({ useClientStorage: true });
-
-  try {
-    const { rows } = await pool.query(`
-      SELECT 
-        tk.id::text,
-        tk.ten_dang_nhap as username,
-        tk.ten_hien_thi as name,
-        vt.ma as role,
-        tk.nhan_su_id::text as "staffId",
-        (tk.trang_thai = 'HOAT_DONG') as "isActive",
-        tk.ly_do_khoa as "lockReason",
-        TO_CHAR(tk.dang_nhap_cuoi, 'YYYY-MM-DD"T"HH24:MI:SS') as "lastLogin",
-        ARRAY(
-          SELECT p.du_an_id::text FROM pham_vi_du_an p WHERE p.tai_khoan_id = tk.id
-        ) as "assignedProjectIds"
-      FROM tai_khoan tk
-      JOIN vai_tro vt ON tk.vai_tro_id = vt.id
-      ORDER BY tk.id ASC;
-    `);
-    return res.json(rows);
-  } catch (err: any) {
-    console.error('[API] /api/accounts error:', err.message);
-    return res.json({ useClientStorage: true, error: err.message });
+    console.error(`[API] /api/sync/${req.params.entity} error:`, err.message);
+    return res.status(500).json({ success: false, error: err.message });
   }
 });
 
@@ -479,8 +204,8 @@ app.post('/api/auth/login', async (req, res) => {
         });
       }
 
-      // Password check: accepts Nmh@2026 (standard test password) or dev fallbacks
-      const isValid = (password === 'Nmh@2026' || password === 'admin123' || password === '123456' || password === acc.passwordHash);
+      // Mật khẩu lưu dạng băm scrypt; tài khoản mẫu chưa đổi mật khẩu dùng mật khẩu thử nghiệm chung
+      const isValid = verifyPassword(String(password || ''), acc.passwordHash);
       if (!isValid) {
         return res.status(401).json({ success: false, message: 'Tên đăng nhập hoặc mật khẩu không đúng.' });
       }
@@ -555,6 +280,19 @@ app.post('/api/auth/change-password', async (req, res) => {
   }
   if (currentPassword === newPassword) {
     return res.status(400).json({ success: false, message: 'Mật khẩu mới phải khác mật khẩu hiện tại.' });
+  }
+  const { accountId } = req.body || {};
+  if (pool && accountId) {
+    try {
+      const { rows } = await pool.query('SELECT mat_khau_bam FROM tai_khoan WHERE id = $1', [parseInt(accountId, 10)]);
+      if (!rows[0] || !verifyPassword(currentPassword, rows[0].mat_khau_bam)) {
+        return res.status(400).json({ success: false, message: 'Mật khẩu hiện tại không đúng.' });
+      }
+      await setPassword(pool, accountId, newPassword);
+      await pool.query('UPDATE tai_khoan SET phai_doi_mat_khau = 0 WHERE id = $1', [parseInt(accountId, 10)]).catch(() => {});
+    } catch (err: any) {
+      return res.status(500).json({ success: false, message: 'Không đổi được mật khẩu. Vui lòng thử lại.' });
+    }
   }
   return res.json({ success: true, message: 'Đã đổi mật khẩu thành công.' });
 });
@@ -648,6 +386,9 @@ async function autoInitDatabaseIfEmpty() {
 async function startServer() {
   // Check and auto-initialize database tables if empty
   await autoInitDatabaseIfEmpty();
+  if (pool) {
+    await ensureSchemaExtensions(pool).catch(err => console.error('[PostgreSQL] Schema extension error:', err.message));
+  }
   if (!isProd) {
     // Development mode: mount Vite dev middleware
     const vite = await createViteServer({

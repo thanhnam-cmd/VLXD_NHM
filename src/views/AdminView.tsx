@@ -166,6 +166,7 @@ const AccountFormModal: React.FC<{ account?: UserAccount; onClose: () => void; o
 
 /** Đổi mật khẩu của chính mình (MH-22) */
 const ChangeOwnPasswordModal: React.FC<{ onClose: () => void; onDone: (m: string) => void }> = ({ onClose, onDone }) => {
+  const { currentUser } = useStore();
   const [cur, setCur] = useState('');
   const [next, setNext] = useState('');
   const [confirm, setConfirm] = useState('');
@@ -178,7 +179,7 @@ const ChangeOwnPasswordModal: React.FC<{ onClose: () => void; onDone: (m: string
           if (!cur) return setErr('Vui lòng nhập mật khẩu hiện tại.');
           if (!/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).{8,}$/.test(next)) return setErr('Mật khẩu cần tối thiểu 8 ký tự, gồm chữ hoa, chữ thường và chữ số.');
           if (next !== confirm) return setErr('Mật khẩu xác nhận không trùng khớp.');
-          const r = await dbService.changePassword(cur, next);
+          const r = await dbService.changePassword(cur, next, currentUser.id);
           if (!r.success) return setErr(r.message);
           onDone('Đã đổi mật khẩu.');
         }}>Lưu mật khẩu</button>

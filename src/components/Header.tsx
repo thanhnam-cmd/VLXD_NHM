@@ -127,7 +127,7 @@ export const Header: React.FC<HeaderProps> = ({
     }
 
     try {
-      const res = await dbService.changePassword(currentPw, newPw);
+      const res = await dbService.changePassword(currentPw, newPw, currentUser.id);
       if (res.success) {
         setPwSuccess('Đã đổi mật khẩu thành công!');
         setTimeout(() => {

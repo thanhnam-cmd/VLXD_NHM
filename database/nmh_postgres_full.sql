@@ -794,28 +794,28 @@ ON CONFLICT (id) DO NOTHING;
 
 -- Bảng 21: nhat_ky_thao_tac (14 nhật ký audit)
 INSERT INTO nhat_ky_thao_tac (id, tai_khoan_id, thao_tac, loai_doi_tuong, doi_tuong_id, ly_do, thoi_diem_tao) VALUES
-(1, 2, 'TAO_MOI', 'DuAn', 1, 'Ghi nhận thao tác hệ thống', '2026-10-11 100:00:00'),
-(2, 2, 'TAO_MOI', 'DuAn', 5, 'Ghi nhận thao tác hệ thống', '2026-10-11 101:00:00'),
-(3, 3, 'DOI_TRANG_THAI', 'DuAn', 6, 'Ghi nhận thao tác hệ thống', '2026-10-11 102:00:00'),
-(6, 3, 'KET_THUC_SOM', 'PhanCong', 86, 'Ghi nhận thao tác hệ thống', '2026-10-11 105:00:00'),
-(7, 3, 'HUY', 'PhanCong', 88, 'Ghi nhận thao tác hệ thống', '2026-10-11 106:00:00'),
-(8, 2, 'HUY', 'DuAn', 9, 'Ghi nhận thao tác hệ thống', '2026-10-11 107:00:00'),
-(9, 2, 'DIEU_CHINH', 'PhanCong', 33, 'Ghi nhận thao tác hệ thống', '2026-10-11 108:00:00'),
-(10, 2, 'TAO_MOI', 'LichNghiBan', 8, 'Ghi nhận thao tác hệ thống', '2026-10-11 109:00:00'),
-(11, 2, 'HUY', 'LichNghiBan', 5, 'Ghi nhận thao tác hệ thống', '2026-10-11 110:00:00'),
-(12, 2, 'CHON_BAN_TRIEN_KHAI', 'PhienBanHoSo', 14, 'Ghi nhận thao tác hệ thống', '2026-10-11 111:00:00'),
-(13, 1, 'KHOA', 'TaiKhoan', 9, 'Ghi nhận thao tác hệ thống', '2026-10-11 112:00:00'),
-(14, 2, 'TAI_LEN', 'PhienBanHoSo', 14, 'Ghi nhận thao tác hệ thống', '2026-10-11 113:00:00')
+(1, 2, 'TAO_MOI', 'DuAn', 1, 'Ghi nhận thao tác hệ thống', '2026-10-11 10:00:00'),
+(2, 2, 'TAO_MOI', 'DuAn', 5, 'Ghi nhận thao tác hệ thống', '2026-10-11 10:01:00'),
+(3, 3, 'DOI_TRANG_THAI', 'DuAn', 6, 'Ghi nhận thao tác hệ thống', '2026-10-11 10:02:00'),
+(6, 3, 'KET_THUC_SOM', 'PhanCong', 86, 'Ghi nhận thao tác hệ thống', '2026-10-11 10:05:00'),
+(7, 3, 'HUY', 'PhanCong', 88, 'Ghi nhận thao tác hệ thống', '2026-10-11 10:06:00'),
+(8, 2, 'HUY', 'DuAn', 9, 'Ghi nhận thao tác hệ thống', '2026-10-11 10:07:00'),
+(9, 2, 'DIEU_CHINH', 'PhanCong', 33, 'Ghi nhận thao tác hệ thống', '2026-10-11 10:08:00'),
+(10, 2, 'TAO_MOI', 'LichNghiBan', 8, 'Ghi nhận thao tác hệ thống', '2026-10-11 10:09:00'),
+(11, 2, 'HUY', 'LichNghiBan', 5, 'Ghi nhận thao tác hệ thống', '2026-10-11 10:10:00'),
+(12, 2, 'CHON_BAN_TRIEN_KHAI', 'PhienBanHoSo', 14, 'Ghi nhận thao tác hệ thống', '2026-10-11 10:11:00'),
+(13, 1, 'KHOA', 'TaiKhoan', 9, 'Ghi nhận thao tác hệ thống', '2026-10-11 10:12:00'),
+(14, 2, 'TAI_LEN', 'PhienBanHoSo', 14, 'Ghi nhận thao tác hệ thống', '2026-10-11 10:13:00')
 ON CONFLICT (id) DO NOTHING;
 
 -- Bảng 22: cau_hinh (6 tham số hệ thống theo đặc tả)
 INSERT INTO cau_hinh (khoa_cau_hinh, gia_tri, mo_ta, thoi_diem_cap_nhat) VALUES
 ('THOI_DIEM_TRA_CUU', '2026-10-12 09:00:00', 'Thời điểm tra cứu cố định phục vụ chấm điểm và chạy kịch bản thử nghiệm', '2026-10-12 09:00:00'),
-('SO_NGAY_CANH_BAO_SAP_DEN_HAN', '7', 'Số ngày trước khi đến hạn để kích hoạt cảnh báo sắp đến hạn', '2026-10-12 09:00:00'),
+('SO_NGAY_SAP_DEN_HAN', '7', 'Số ngày tính là sắp đến hạn', '2026-10-12 09:00:00'),
 ('THOI_GIAN_HET_PHIEN_PHUT', '30', 'Thời gian tự động kết thúc phiên làm việc khi người dùng không tương tác (phút)', '2026-10-12 09:00:00'),
-('DUNG_LUONG_TOI_DA_TEP_MB', '50', 'Dung lượng tải lên tối đa cho một tệp tài liệu hoặc bản vẽ (MB)', '2026-10-12 09:00:00'),
+('DUNG_LUONG_TAI_LEN_TOI_DA_MB', '50', 'Dung lượng tải lên tối đa cho một tệp tài liệu hoặc bản vẽ (MB)', '2026-10-12 09:00:00'),
 ('LOAI_TEP_CHO_PHEP', 'BAN_VE_CAD,PDF,ANH,BANG_TINH,NEN', 'Danh sách các định dạng tệp hồ sơ được phép tải lên hệ thống', '2026-10-12 09:00:00'),
-('PHIEN_BAN_HE_THONG', '2.4.0-NMH-PostgreSQL', 'Phiên bản phần mềm chính thức công ty NMH LLC', '2026-10-12 09:00:00')
+('SO_NGAY_GIU_SAO_LUU', '7', 'Số bản sao lưu hằng ngày được giữ', '2026-10-12 09:00:00')
 ON CONFLICT (khoa_cau_hinh) DO UPDATE SET gia_tri = EXCLUDED.gia_tri, mo_ta = EXCLUDED.mo_ta;
 
 -- =========================================================================

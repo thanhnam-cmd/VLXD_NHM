@@ -242,7 +242,8 @@ export const nextCode = (codes: (string | undefined)[], prefix: string, width: n
   return `${prefix}${String(max + 1).padStart(width, '0')}`;
 };
 
-export const newId = () => `${Date.now()}${Math.floor(Math.random() * 1000)}`;
+/** Mã định danh số nằm trong giới hạn kiểu INT của PostgreSQL (khóa chính các bảng) */
+export const newId = () => String(10_000_000 + Math.floor(Math.random() * 2_000_000_000));
 
 /** Trạng thái hạng mục suy ra từ công việc: Chưa giao, Chưa bắt đầu, Đang thực hiện, Hoàn thành (MH-08 thành phần 5) */
 export const getCategoryStatus = (catTasks: Task[]) => {

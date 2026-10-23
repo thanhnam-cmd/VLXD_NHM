@@ -285,12 +285,39 @@ export const dbService = {
     }
   },
 
-  changePassword: async (currentPassword: string, newPassword: string): Promise<{ success: boolean; message: string }> => {
+  /** Nạp toàn bộ dữ liệu nghiệp vụ từ PostgreSQL; trả về null nếu máy chủ chưa có CSDL */
+  bootstrap: async (): Promise<Record<string, any> | null> => {
+    try {
+      const res = await fetch('/api/bootstrap');
+      if (!res.ok) return null;
+      const data = await res.json();
+      return data && !data.useClientStorage ? data : null;
+    } catch {
+      return null;
+    }
+  },
+
+  /** Ghi các bản ghi vừa thay đổi vào PostgreSQL */
+  syncEntity: async (entity: string, rows: any[], actor?: string): Promise<{ success: boolean; error?: string }> => {
+    try {
+      const res = await fetch(`/api/sync/${entity}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rows, actor })
+      });
+      const data = await res.json();
+      return res.ok ? { success: true } : { success: false, error: data.error };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  },
+
+  changePassword: async (currentPassword: string, newPassword: string, accountId?: string): Promise<{ success: boolean; message: string }> => {
     try {
       const res = await fetch('/api/auth/change-password', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ currentPassword, newPassword })
+        body: JSON.stringify({ currentPassword, newPassword, accountId })
       });
       return await res.json();
     } catch {
