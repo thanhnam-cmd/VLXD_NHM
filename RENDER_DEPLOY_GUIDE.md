@@ -39,9 +39,9 @@
    - **Branch**: `main` (hoặc nhánh bạn push code).
    - **Root Directory**: Để trống (mặc định thư mục gốc).
    - **Runtime**: Chọn **Node**.
-   - **Build Command**:
+   - **Build Command** (phải cài thư viện trước khi build):
      ```bash
-     npm run build
+     npm install && npm run build
      ```
    - **Start Command**:
      ```bash
@@ -55,7 +55,10 @@
    - **Value**: Dán chuỗi **Internal Database URL** của database `VLXD` bạn vừa copy ở Bước 1.
    *(Ví dụ: `postgres://vlxd_admin:password123@dpg-xxxxx/VLXD`)*
 
-5. Nhấn **Create Web Service**. Render sẽ tự động kéo mã nguồn, chạy `npm run build` và khởi động máy chủ bằng `npm start`.
+   *(Internal URL không cần SSL; nếu dùng External URL `…render.com` thì máy chủ tự bật SSL.)*
+
+5. Nhấn **Create Web Service**. Render sẽ tự động kéo mã nguồn, chạy `npm install && npm run build` và khởi động máy chủ bằng `npm start`.
+6. Khi khởi động, máy chủ tự nạp `database/nmh_postgres_full.sql` nếu CSDL còn trống và bổ sung các cột/bảng còn thiếu (chỉ thêm, không xóa). Nhật ký Render sẽ có dòng `[PostgreSQL] Database tables already initialized.` hoặc `Auto-initialization completed successfully!`.
 
 ---
 

@@ -21,11 +21,19 @@ let pool: pg.Pool | null = null;
 
 if (databaseUrl) {
   try {
+    // SSL: tắt với máy cục bộ và Internal Database URL của Render (host dạng dpg-xxxx-a, không có tên miền);
+    // bật với External Database URL (…render.com) hoặc khi URL ghi rõ sslmode=require
+    let host = '';
+    try { host = new URL(databaseUrl).hostname; } catch {}
+    const isLocalOrInternal = host === 'localhost' || host === '127.0.0.1' || (host !== '' && !host.includes('.'));
+    const wantsSsl = /sslmode=(require|verify-ca|verify-full)/.test(databaseUrl);
+    const noSsl = /sslmode=disable/.test(databaseUrl);
+    // pg ưu tiên sslmode trong URL hơn tùy chọn ssl, nên bỏ tham số này và dùng cấu hình ssl ở dưới
+    let connectionString = databaseUrl;
+    try { const u = new URL(databaseUrl); u.searchParams.delete('sslmode'); connectionString = u.toString(); } catch {}
     pool = new pg.Pool({
-      connectionString: databaseUrl,
-      ssl: databaseUrl.includes('localhost') || databaseUrl.includes('127.0.0.1')
-        ? false
-        : { rejectUnauthorized: false }
+      connectionString,
+      ssl: noSsl || (isLocalOrInternal && !wantsSsl) ? false : { rejectUnauthorized: false }
     });
     console.log('[PostgreSQL] Database pool initialized for:', databaseUrl.split('@')[1] || 'PostgreSQL');
   } catch (err) {
