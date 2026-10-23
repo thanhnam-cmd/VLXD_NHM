@@ -19,6 +19,10 @@ export interface UserAccount {
   lockReason?: string;
   lastLogin?: string;
   assignedProjectIds?: string[]; // pham_vi_du_an for QUAN_LY
+  scopeGrants?: Record<string, { grantedBy: string; grantedAt: string }>; // người cấp & thời điểm cấp theo dự án
+  lockedAt?: string;
+  createdAt?: string;
+  mustChangePassword?: boolean;
 }
 
 export type StaffRoleTitle = 
@@ -47,6 +51,24 @@ export interface Staff {
   isActive: boolean; // DANG_LAM_VIEC / NGUNG_LAM_VIEC
   startDate: string; // ngay_vao_lam
   leaveDate?: string; // ngay_ngung_lam_viec
+  notes?: string;
+  skills?: StaffSkill[]; // nhan_su_chuyen_mon
+}
+
+export interface StaffSkill {
+  name: string;
+  level: 'CO_BAN' | 'THANH_THAO' | 'CHUYEN_SAU';
+  isPrimary?: boolean;
+}
+
+export interface Customer {
+  id: string;
+  code: string;
+  name: string;
+  contactPerson?: string;
+  phone?: string;
+  email?: string;
+  address?: string;
   notes?: string;
 }
 
@@ -78,8 +100,11 @@ export interface Project {
   managerName?: string;
   totalFloorArea?: string; // e.g. "2.247 m²"
   completedAt?: string;
+  completedBy?: string;
   cancelledAt?: string;
+  cancelledBy?: string;
   cancelReason?: string;
+  createdAt?: string;
 }
 
 export interface Category {
@@ -90,6 +115,7 @@ export interface Category {
   systemTypeId: string;
   systemTypeName: string;
   orderNum: number;
+  description?: string;
 }
 
 export type TaskStage = 'Khảo sát' | 'Thiết kế' | 'Xây dựng' | 'Hoàn thiện' | 'Nghiệm thu' | string;
@@ -109,11 +135,24 @@ export type TaskStatus =
 export interface ExternalSubcontractor {
   id: string;
   companyName: string;
+  address?: string;
+  taxCode?: string;
   contactPerson: string;
+  contactTitle?: string;
   phone: string;
   area: string;
   status: 'HOP_TAC' | 'NGUNG_HOP_TAC';
+  notes?: string;
   assignedTaskCount?: number;
+}
+
+export interface ExternalDailyStaffing {
+  date: string; // YYYY-MM-DD
+  presentCount: number;
+  names?: string;
+  content?: string;
+  updatedBy: string;
+  updatedAt: string;
 }
 
 export interface ExternalAssignment {
@@ -125,9 +164,14 @@ export interface ExternalAssignment {
   startDate: string;
   dueDate: string;
   workerCount?: number;
+  contractValue?: number;
   nmhCoordinatorId: string;
   status: 'HIEU_LUC' | 'HUY' | 'active' | 'cancelled';
   cancelReason?: string;
+  cancelledAt?: string;
+  notes?: string;
+  projectId?: string;
+  dailyStaffing?: ExternalDailyStaffing[];
 }
 
 export interface Task {
@@ -148,8 +192,10 @@ export interface Task {
   completedAt?: string;
   approvedBy?: string;
   cancelledAt?: string;
+  cancelledBy?: string;
   cancelReason?: string;
   lastUpdated?: string;
+  createdAt?: string;
   latestResultSummary?: string;
   resultSummary?: string; // alias
   externalAssignment?: ExternalAssignment;
@@ -179,7 +225,9 @@ export interface Assignment {
   assignedBy?: string;
   createdAt?: string;
   cancelledAt?: string;
+  cancelledBy?: string;
   cancelReason?: string;
+  affectedDeferred?: boolean; // Quản lý chọn "Để sau" khi bị lịch nghỉ/bận ảnh hưởng
 }
 
 export interface StaffLeave {
@@ -212,6 +260,11 @@ export interface WorkLog {
   statusVerifiedByManager?: boolean;
   correctionForLogId?: string;
   isCorrected?: boolean;
+  submittedByAccountId?: string;
+  submittedByRole?: string;
+  recordedByManager?: boolean; // Ghi nhận thay hiện trường
+  externalAssignmentId?: string;
+  photos?: { name: string; dataUrl?: string; size?: number }[];
   proofFile?: {
     originalName: string;
     filePath: string;
@@ -237,6 +290,8 @@ export interface TechDocVersion {
   uploadedAt: string;
   isSelectedForExecution: boolean;
   selectedAt?: string;
+  selectedBy?: string;
+  uploadedBy?: string;
 }
 
 export interface TechDoc {
@@ -257,6 +312,8 @@ export interface TechDoc {
   floorLevel?: string;
   isOfficialBlueprint?: boolean;
   uploadedByStaffId?: string;
+  uploadedBy?: string;
+  createdAt?: string;
   versions?: TechDocVersion[];
   floorArea?: string;
   elevation?: string;
@@ -273,4 +330,30 @@ export interface SystemConfig {
   sessionTimeoutMinutes: number; // THOI_GIAN_HET_PHIEN_PHUT (30)
   maxUploadSizeMB: number; // 50
   allowedFileTypes: string; // BAN_VE_CAD,PDF,ANH,BANG_TINH,NEN
+  backupRetentionCount?: number; // SO_NGAY_GIU_SAO_LUU (7)
+  updatedAt?: Record<string, string>; // thời điểm cập nhật gần nhất của từng khóa
+}
+
+export type AuditAction =
+  | 'TAO_MOI'
+  | 'DIEU_CHINH'
+  | 'DOI_TRANG_THAI'
+  | 'HUY'
+  | 'XAC_NHAN_HOAN_THANH'
+  | 'KET_THUC_SOM'
+  | 'TAI_LEN'
+  | 'CHON_BAN_TRIEN_KHAI'
+  | 'KHOA'
+  | 'MO_KHOA';
+
+export interface AuditLog {
+  id: string;
+  time: string; // YYYY-MM-DD HH:mm:ss
+  user: string; // tên đăng nhập hoặc 'Hệ thống'
+  action: AuditAction;
+  objectType: string; // Dự án, Công việc, Phân công, Lịch nghỉ/bận, Phiên bản hồ sơ, Tài khoản, Nhân sự đội ngoài theo ngày
+  objectId: string;
+  reason?: string;
+  oldVal?: any;
+  newVal?: any;
 }

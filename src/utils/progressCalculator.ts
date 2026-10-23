@@ -12,7 +12,25 @@ export const ALL_STAGES: TaskStage[] = [
  * Mốc thời gian tra cứu cố định theo tài liệu khóa luận (bảng cau_hinh: THOI_DIEM_TRA_CUU).
  * Dùng để tính toán công việc quá hạn, sắp đến hạn và phân công bị ảnh hưởng.
  */
-export const DEMO_QUERY_TIME = '2026-10-12 09:00:00';
+export let DEMO_QUERY_TIME = '2026-10-12 09:00:00';
+/** SO_NGAY_SAP_DEN_HAN – số ngày tính là sắp đến hạn */
+export let UPCOMING_DAYS = 7;
+
+const pad2 = (n: number) => String(n).padStart(2, '0');
+
+/**
+ * Áp dụng cấu hình hệ thống (MH-20). Để trống thời điểm tra cứu thì dùng giờ máy (QC-05).
+ * Các module import DEMO_QUERY_TIME nhận giá trị mới nhờ liên kết động của ES module.
+ */
+export function applyQueryConfig(queryTime: string | undefined, upcomingDays: number | undefined) {
+  if (queryTime && queryTime.trim()) {
+    DEMO_QUERY_TIME = queryTime.trim();
+  } else {
+    const d = new Date();
+    DEMO_QUERY_TIME = `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}:00`;
+  }
+  if (upcomingDays && upcomingDays > 0) UPCOMING_DAYS = upcomingDays;
+}
 
 export const STATUS_WEIGHTS = {
   not_started: 0,
@@ -66,6 +84,6 @@ export function isTaskUpcoming7Days(dueDate: string, status: string, refDateStr 
   const due = new Date(dueDate).getTime();
   const ref = new Date(refDateStr).getTime();
   if (isNaN(due) || isNaN(ref)) return false;
-  const sevenDays = 7 * 24 * 60 * 60 * 1000;
+  const sevenDays = UPCOMING_DAYS * 24 * 60 * 60 * 1000;
   return due >= ref && due <= ref + sevenDays;
 }

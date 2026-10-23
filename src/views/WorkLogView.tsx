@@ -1,292 +1,160 @@
 import React, { useState } from 'react';
-import { WorkLog, Project, Task, Staff, UserAccount } from '../types/index.ts';
-import { 
-  ClipboardCheck, 
-  Send, 
-  CheckCircle2, 
-  Clock, 
-  AlertCircle, 
-  FileText, 
-  Check, 
-  User, 
-  Calendar 
-} from 'lucide-react';
+import { WorkLog } from '../types/index.ts';
+import { useStore } from '../state/store.tsx';
+import { ClipboardCheck, Search } from 'lucide-react';
+import { useToast, Modal } from '../components/ui.tsx';
+import { isTeamLeadRole, isDirectorRole, canOperate } from '../utils/domain.ts';
+import { WorkLogForm, WorkLogCard, WorkLogDetailDrawer, ApproveModal, RecordResultModal, getLogLabel, reporterOf } from '../components/WorkLogDialogs.tsx';
 
 interface WorkLogViewProps {
-  workLogs: WorkLog[];
-  projects: Project[];
-  tasks: Task[];
-  staff: Staff[];
-  currentUser: UserAccount;
-  onAddWorkLog: (log: Omit<WorkLog, 'id' | 'submittedAt'>) => void;
-  onApproveWorkLog: (logId: string) => void;
+  initialStatus?: string;
+  initialTaskId?: string;
+  initialProjectId?: string;
 }
 
-export const WorkLogView: React.FC<WorkLogViewProps> = ({
-  workLogs,
-  projects,
-  tasks,
-  staff,
-  currentUser,
-  onAddWorkLog,
-  onApproveWorkLog
-}) => {
-  const [selectedProjectId, setSelectedProjectId] = useState<string>(projects[0]?.id || '');
-  const activeTasks = tasks.filter(t => t.projectId === selectedProjectId && t.status !== 'cancelled');
-  const [selectedTaskId, setSelectedTaskId] = useState<string>(activeTasks[0]?.id || '');
-  const [content, setContent] = useState('');
-  const [completedVolume, setCompletedVolume] = useState('');
-  const [issuesFaced, setIssuesFaced] = useState('');
-  const [requestApproval, setRequestApproval] = useState(false);
-  const [toast, setToast] = useState<string | null>(null);
+/**
+ * Nhật ký hiện trường theo vai trò:
+ * – Quản lý / Quản trị viên: MH-12 (danh sách, Xem, Phê duyệt, Ghi nhận kết quả)
+ * – Ban giám đốc: MH-15 (chỉ danh sách và nút Xem)
+ * – Đội trưởng: MH-18 (biểu mẫu gửi báo cáo + Nhật ký của tôi)
+ */
+export const WorkLogView: React.FC<WorkLogViewProps> = ({ initialStatus, initialTaskId, initialProjectId }) => {
+  const store = useStore();
+  const { currentUser, scoped, workLogs, tasks, visibleProjects } = store;
+  const toast = useToast();
+  const isLead = isTeamLeadRole(currentUser);
+  const isDirector = isDirectorRole(currentUser);
+  const canManage = canOperate(currentUser);
 
-  const canApprove = currentUser.role === 'manager' || currentUser.role === 'admin' || currentUser.role === 'QUAN_LY' || currentUser.role === 'QUAN_TRI';
+  const initialTaskProject = tasks.find(t => t.id === initialTaskId)?.projectId;
+  const [search, setSearch] = useState('');
+  const [fProject, setFProject] = useState(isLead ? '' : initialTaskProject || '');
+  const [fTask, setFTask] = useState(isLead ? '' : initialTaskId || '');
+  const [fSender, setFSender] = useState('');
+  const [fStatus, setFStatus] = useState(initialStatus || 'all');
+  const [fFrom, setFFrom] = useState('');
+  const [fTo, setFTo] = useState('');
+  const [viewLog, setViewLog] = useState<WorkLog | null>(null);
+  const [approveLog, setApproveLog] = useState<WorkLog | null>(null);
+  const [recordOpen, setRecordOpen] = useState(false);
+  const [followUp, setFollowUp] = useState<WorkLog | null>(null);
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!content.trim() || !selectedTaskId) return;
+  // Đội trưởng chỉ thấy báo cáo do chính mình gửi (kể cả của công việc về sau bị Hủy)
+  const baseLogs = isLead
+    ? workLogs.filter(w => w.submittedByAccountId === currentUser.id || (!!currentUser.username && w.submittedByUsername === currentUser.username))
+    : scoped.workLogs;
 
-    onAddWorkLog({
-      taskId: selectedTaskId,
-      projectId: selectedProjectId,
-      submittedByStaffId: currentUser.staffId || 's1',
-      content: content.trim(),
-      completedVolume: completedVolume.trim() || undefined,
-      issuesFaced: issuesFaced.trim() || undefined,
-      requestApproval,
-      statusVerifiedByManager: false
-    });
+  const senders = Array.from(new Set(baseLogs.map(w => reporterOf(w, store).name)));
+  const rows = baseLogs.filter(w => {
+    const t = tasks.find(x => x.id === w.taskId);
+    if (fProject && (w.projectId || t?.projectId) !== fProject) return false;
+    if (fTask && w.taskId !== fTask) return false;
+    if (fSender && reporterOf(w, store).name !== fSender) return false;
+    if (fFrom && w.submittedAt.slice(0, 10) < fFrom) return false;
+    if (fTo && w.submittedAt.slice(0, 10) > fTo) return false;
+    if (search) {
+      const hay = `${w.content} ${t?.title || ''}`.toLowerCase();
+      if (!hay.includes(search.toLowerCase())) return false;
+    }
+    const lbl = getLogLabel(w, t).key;
+    if (fStatus === 'pending' && lbl !== 'CHO_XAC_NHAN') return false;
+    if (fStatus === 'confirmed' && lbl !== 'DA_XAC_NHAN') return false;
+    if (fStatus === 'issues' && !w.issuesFaced) return false;
+    return true;
+  }).sort((a, b) => b.submittedAt.localeCompare(a.submittedAt));
 
-    setContent('');
-    setCompletedVolume('');
-    setIssuesFaced('');
-    setRequestApproval(false);
-    setToast('Đã ghi nhận nhật ký thi công hiện trường!');
-    setTimeout(() => setToast(null), 3000);
-  };
+  const filterBar = (
+    <div className="flex flex-wrap gap-2 text-xs items-center">
+      {!isLead && (
+        <div className="relative">
+          <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Tìm nội dung, tên công việc" className="pl-8 pr-3 py-1.5 bg-slate-50 border border-slate-300 rounded-lg w-56" />
+        </div>
+      )}
+      <select value={fProject} onChange={e => { setFProject(e.target.value); setFTask(''); }} className="px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg">
+        <option value="">Mọi dự án</option>
+        {visibleProjects.map(p => <option key={p.id} value={p.id}>{p.code}</option>)}
+      </select>
+      <select value={fTask} disabled={!fProject} onChange={e => setFTask(e.target.value)} className="px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg disabled:opacity-50">
+        <option value="">Mọi công việc</option>
+        {tasks.filter(t => t.projectId === fProject).map(t => <option key={t.id} value={t.id}>{t.code} · {t.title}</option>)}
+      </select>
+      {!isLead && (
+        <>
+          <select value={fSender} onChange={e => setFSender(e.target.value)} className="px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg">
+            <option value="">Mọi người gửi</option>
+            {senders.map(s => <option key={s} value={s}>{s}</option>)}
+          </select>
+          <select value={fStatus} onChange={e => setFStatus(e.target.value)} className="px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg">
+            <option value="all">Tất cả</option>
+            <option value="pending">Chờ Quản lý xác nhận</option>
+            <option value="confirmed">Quản lý đã xác nhận hoàn thành</option>
+            <option value="issues">Có vướng mắc</option>
+          </select>
+        </>
+      )}
+      <input type="date" value={fFrom} onChange={e => setFFrom(e.target.value)} className="px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg font-mono" />
+      <input type="date" value={fTo} onChange={e => setFTo(e.target.value)} className="px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg font-mono" />
+      <span className="ml-auto text-xs font-mono font-bold px-2 py-0.5 rounded bg-slate-100 text-slate-700">{rows.length} bản ghi</span>
+    </div>
+  );
+
+  const list = (
+    <div className="space-y-3">
+      {rows.length === 0 ? <div className="p-6 text-center text-xs text-slate-400">Không có báo cáo phù hợp.</div> : rows.map(log => (
+        <WorkLogCard
+          key={log.id}
+          log={log}
+          onView={() => setViewLog(log)}
+          onApprove={canManage && !isDirector ? () => setApproveLog(log) : undefined}
+          onFollowUp={isLead ? () => setFollowUp(log) : undefined}
+        />
+      ))}
+    </div>
+  );
 
   return (
     <div className="space-y-6">
-      {/* Toast */}
-      {toast && (
-        <div className="p-3 rounded-lg text-xs font-semibold bg-emerald-600 text-white flex items-center justify-between shadow-md">
-          <span>{toast}</span>
-          <button onClick={() => setToast(null)}>✕</button>
+      {toast.node}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <h2 className="text-xl font-bold text-[#0D1A36] tracking-tight">Nhật ký thi công hiện trường</h2>
+        {canManage && !isDirector && (
+          <button type="button" onClick={() => setRecordOpen(true)}
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold rounded-xl bg-white border border-slate-300 text-slate-800 hover:bg-slate-100 shadow-2xs cursor-pointer">
+            <ClipboardCheck className="w-3.5 h-3.5" /> Ghi nhận kết quả
+          </button>
+        )}
+      </div>
+
+      {isLead ? (
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+          <div className="lg:col-span-5 bg-white p-5 rounded-xl border border-slate-200 shadow-xs space-y-4">
+            <div className="border-b border-slate-100 pb-3">
+              <h3 className="text-sm font-bold text-[#0D1A36] flex items-center gap-2"><ClipboardCheck className="w-4 h-4 text-[#152A55]" /> Gửi báo cáo nhật ký hiện trường</h3>
+            </div>
+            <WorkLogForm initialProjectId={initialProjectId} initialTaskId={initialTaskId} onSaved={(m) => toast.show(m)} />
+          </div>
+          <div className="lg:col-span-7 bg-white p-5 rounded-xl border border-slate-200 shadow-xs space-y-4">
+            <h3 className="text-sm font-bold text-[#0D1A36] pb-3 border-b border-slate-100">Nhật ký của tôi</h3>
+            {filterBar}
+            {list}
+          </div>
+        </div>
+      ) : (
+        <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-xs space-y-4">
+          {filterBar}
+          {list}
         </div>
       )}
 
-      {/* Header */}
-      <div>
-        <h2 className="text-xl font-bold text-[#0D1A36] tracking-tight">
-          Nhật Ký Thi Công Hiện Trường &amp; Báo Cáo Kết Quả
-        </h2>
-        <p className="text-xs text-slate-500 mt-0.5">
-          Theo dõi tiến độ kéo cáp, lắp đặt thiết bị và phê duyệt nghiệm thu từ cấp Quản lý (UC-07)
-        </p>
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-        {/* Worklog Submission Form (5 cols) */}
-        <div className="lg:col-span-5 bg-white p-5 rounded-xl border border-slate-200 shadow-xs space-y-4">
-          <div className="border-b border-slate-100 pb-3">
-            <h3 className="text-sm font-bold text-[#0D1A36] flex items-center gap-2">
-              <ClipboardCheck className="w-4 h-4 text-[#152A55]" />
-              Gửi Báo Cáo Nhật Ký Hiện Trường
-            </h3>
-            <p className="text-[11px] text-slate-500">
-              Ghi nhận khối lượng thực tế và kiến nghị kỹ thuật
-            </p>
-          </div>
-
-          <form onSubmit={handleSubmit} className="space-y-3.5 text-xs">
-            <div>
-              <label className="block text-slate-600 font-semibold mb-1">Dự án công trình</label>
-              <select
-                value={selectedProjectId}
-                onChange={(e) => {
-                  setSelectedProjectId(e.target.value);
-                  const newTasks = tasks.filter(t => t.projectId === e.target.value && t.status !== 'cancelled');
-                  if (newTasks[0]) setSelectedTaskId(newTasks[0].id);
-                }}
-                className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-slate-800"
-              >
-                {projects.map(p => (
-                  <option key={p.id} value={p.id}>{p.name}</option>
-                ))}
-              </select>
-            </div>
-
-            <div>
-              <label className="block text-slate-600 font-semibold mb-1">Hạng mục / Công việc</label>
-              <select
-                value={selectedTaskId}
-                onChange={(e) => setSelectedTaskId(e.target.value)}
-                className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-slate-800"
-              >
-                {activeTasks.map(t => (
-                  <option key={t.id} value={t.id}>[{t.stage}] {t.title}</option>
-                ))}
-              </select>
-            </div>
-
-            <div>
-              <label className="block text-slate-600 font-semibold mb-1">Khối lượng thực hiện trong ca</label>
-              <input
-                type="text"
-                placeholder="Ví dụ: Kéo 800m cáp Cat6 tầng 5, lắp 12 loa âm trần..."
-                value={completedVolume}
-                onChange={(e) => setCompletedVolume(e.target.value)}
-                className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-slate-800"
-              />
-            </div>
-
-            <div>
-              <label className="block text-slate-600 font-semibold mb-1">Nội dung chi tiết &amp; Tình hình hiện trường</label>
-              <textarea
-                required
-                rows={3}
-                placeholder="Mô tả công việc đã hoàn thành, kiểm tra chất lượng đấu nối..."
-                value={content}
-                onChange={(e) => setContent(e.target.value)}
-                className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-slate-800"
-              />
-            </div>
-
-            <div>
-              <label className="block text-slate-600 font-semibold mb-1">Khó khăn, vướng mắc (nếu có)</label>
-              <input
-                type="text"
-                placeholder="Ví dụ: Chưa có nguồn điện tầng 7, vướng trần thạch cao..."
-                value={issuesFaced}
-                onChange={(e) => setIssuesFaced(e.target.value)}
-                className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-slate-800"
-              />
-            </div>
-
-            <label className="flex items-center gap-2 p-2.5 rounded-lg bg-amber-50 border border-amber-200 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={requestApproval}
-                onChange={(e) => setRequestApproval(e.target.checked)}
-                className="rounded border-amber-300 text-[#152A55]"
-              />
-              <span className="text-amber-900 font-medium">
-                Đề nghị Quản lý xác nhận nghiệm thu hoàn thành công việc
-              </span>
-            </label>
-
-            <button
-              type="submit"
-              className="w-full py-2.5 px-4 rounded-lg bg-[#152A55] text-white font-semibold text-xs hover:bg-[#1E3A75] flex items-center justify-center gap-1.5 shadow-xs"
-            >
-              <Send className="w-3.5 h-3.5" /> Gửi báo cáo hiện trường
-            </button>
-          </form>
-        </div>
-
-        {/* Worklog Audit Trail List (7 cols) */}
-        <div className="lg:col-span-7 bg-white p-5 rounded-xl border border-slate-200 shadow-xs space-y-4">
-          <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-            <div>
-              <h3 className="text-sm font-bold text-[#0D1A36]">
-                Nhật Ký Thi Công &amp; Dòng Thời Gian Báo Cáo
-              </h3>
-              <p className="text-[11px] text-slate-500">
-                Lưu vết toàn bộ các lần báo cáo và biên bản phê duyệt
-              </p>
-            </div>
-            <span className="text-xs font-mono font-bold px-2 py-0.5 rounded bg-slate-100 text-slate-700">
-              {workLogs.length} bản ghi
-            </span>
-          </div>
-
-          <div className="space-y-3">
-            {workLogs.map((log) => {
-              const project = projects.find(p => p.id === log.projectId);
-              const task = tasks.find(t => t.id === log.taskId);
-              const reporter = staff.find(s => s.id === log.submittedByStaffId);
-
-              return (
-                <div 
-                  key={log.id} 
-                  className={`p-4 rounded-xl border transition-all ${
-                    log.statusVerifiedByManager 
-                      ? 'border-emerald-200 bg-emerald-50/20' 
-                      : log.requestApproval 
-                        ? 'border-amber-200 bg-amber-50/20' 
-                        : 'border-slate-200 bg-slate-50/30'
-                  }`}
-                >
-                  <div className="flex items-start justify-between gap-3 mb-2">
-                    <div>
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="font-bold text-xs text-[#0D1A36]">
-                          {project?.name}
-                        </span>
-                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 font-mono">
-                          {task?.stage}
-                        </span>
-                        {log.statusVerifiedByManager ? (
-                          <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-semibold flex items-center gap-1">
-                            <CheckCircle2 className="w-3 h-3" /> Quản lý đã duyệt hoàn thành
-                          </span>
-                        ) : log.requestApproval ? (
-                          <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 font-semibold flex items-center gap-1">
-                            <Clock className="w-3 h-3" /> Chờ Quản lý xác nhận
-                          </span>
-                        ) : null}
-                      </div>
-                      <div className="text-xs font-semibold text-slate-700 mt-0.5">
-                        {task?.title}
-                      </div>
-                    </div>
-
-                    <div className="text-right text-[11px] text-slate-400 font-mono shrink-0">
-                      {log.submittedAt}
-                    </div>
-                  </div>
-
-                  {log.completedVolume && (
-                    <div className="text-xs text-[#152A55] font-semibold bg-white p-2 rounded border border-slate-200/60 mb-2">
-                      Khối lượng thực hiện: {log.completedVolume}
-                    </div>
-                  )}
-
-                  <p className="text-xs text-slate-700 leading-relaxed">
-                    {log.content}
-                  </p>
-
-                  {log.issuesFaced && (
-                    <div className="mt-2 p-2 rounded bg-red-50 border border-red-200 text-red-700 text-xs flex items-start gap-1.5">
-                      <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-                      <div>
-                        <strong>Vướng mắc phát sinh:</strong> {log.issuesFaced}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Footer with reporter and approval button */}
-                  <div className="mt-3 pt-2 border-t border-slate-200/60 flex items-center justify-between text-xs text-slate-500">
-                    <div className="flex items-center gap-1.5">
-                      <User className="w-3 h-3 text-slate-400" />
-                      <span>Báo cáo bởi: <strong>{reporter?.name || 'Kỹ sư hiện trường'}</strong></span>
-                    </div>
-
-                    {!log.statusVerifiedByManager && canApprove && (
-                      <button
-                        onClick={() => onApproveWorkLog(log.id)}
-                        className="inline-flex items-center gap-1 px-3 py-1 bg-emerald-600 text-white font-semibold text-xs rounded-md hover:bg-emerald-700 transition-colors shadow-xs"
-                      >
-                        <Check className="w-3 h-3" /> Phê duyệt &amp; Xác nhận xong
-                      </button>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      </div>
+      {viewLog && <WorkLogDetailDrawer log={viewLog} allowFollowUp={canManage && !isDirector} onClose={() => setViewLog(null)} onMessage={toast.show} />}
+      {approveLog && <ApproveModal log={approveLog} onClose={() => setApproveLog(null)} onDone={(m) => { setApproveLog(null); toast.show(m); }} />}
+      {recordOpen && <RecordResultModal initialProjectId={fProject || undefined} initialTaskId={fTask || undefined} onClose={() => setRecordOpen(false)} onSaved={(m) => { setRecordOpen(false); toast.show(m); }} />}
+      {followUp && (
+        <Modal title="Gửi bổ sung / đính chính" subtitle="Bản ghi mới liên kết với bản gốc và mang nhãn Đính chính" onClose={() => setFollowUp(null)} size="lg">
+          <WorkLogForm correctionOf={followUp} onSaved={(m) => { setFollowUp(null); toast.show(m); }} onCancel={() => setFollowUp(null)} />
+        </Modal>
+      )}
     </div>
   );
 };

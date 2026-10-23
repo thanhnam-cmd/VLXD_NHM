@@ -1,345 +1,318 @@
-import React, { useState } from 'react';
-import { Project, Task, Staff } from '../types/index.ts';
-import { calculateProjectProgress, getStageStatus } from '../utils/progressCalculator.ts';
-import { 
-  Plus, 
-  MapPin, 
-  User, 
-  Calendar, 
-  ChevronRight, 
-  Search, 
-  Building,
-  CheckCircle2
-} from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { Project } from '../types/index.ts';
+import { useStore } from '../state/store.tsx';
+import { Plus, MapPin, User, Calendar, Search, Building, MoreVertical } from 'lucide-react';
+import { ProjectFormModal, ProjectStatusDialog, projectMenuItems, overdueDaysOf } from '../components/ProjectDialogs.tsx';
+import { useToast, Pagination } from '../components/ui.tsx';
+import { PROJECT_STATUS_LABEL, formatDate, getCategoryStatus, completionRate, canOperate, toTime } from '../utils/domain.ts';
 
 interface ProjectsViewProps {
-  projects: Project[];
-  tasks: Task[];
-  staff: Staff[];
+  initialStatus?: string;
   onSelectProject: (projectId: string) => void;
-  onAddProject: (project: Omit<Project, 'id'>) => void;
 }
 
-export const ProjectsView: React.FC<ProjectsViewProps> = ({
-  projects,
-  tasks,
-  staff,
-  onSelectProject,
-  onAddProject
-}) => {
-  const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState('all');
-  const [isCreateOpen, setIsCreateOpen] = useState(false);
+const PAGE_SIZE = 12; // QC-11
 
-  // New project form state
-  const [code, setCode] = useState(`NMH-PRJ-2026-${Math.floor(10 + Math.random() * 90)}`);
-  const [name, setName] = useState('');
-  const [place, setPlace] = useState('');
-  const [client, setClient] = useState('');
-  const [managerId, setManagerId] = useState(staff[0]?.id || '');
-  const [startDate, setStartDate] = useState('2026-10-15');
-  const [dueDate, setDueDate] = useState('2027-06-30');
-  const [scopeSummary, setScopeSummary] = useState('');
-  const [totalFloorArea, setTotalFloorArea] = useState('2.500 m²');
+// Bộ lọc được giữ khi quay lại từ chi tiết dự án (MH-08 thành phần 1)
+let savedFilters: { search: string; status: string; manager: string; sort: 'nearest' | 'newest' | 'name'; page: number } | null = null;
+
+export const ProjectsView: React.FC<ProjectsViewProps> = ({ initialStatus, onSelectProject }) => {
+  const { visibleProjects: projects, scoped, staff, currentUser } = useStore();
+  const tasks = scoped.tasks;
+  const categories = scoped.categories;
+  const canEdit = canOperate(currentUser);
+  const toast = useToast();
+
+  const [search, setSearch] = useState(initialStatus ? '' : savedFilters?.search || '');
+  const [statusFilter, setStatusFilter] = useState(initialStatus || (savedFilters?.status ?? 'all'));
+  const [managerFilter, setManagerFilter] = useState(initialStatus ? 'all' : savedFilters?.manager || 'all');
+  const [sortBy, setSortBy] = useState<'nearest' | 'newest' | 'name'>(savedFilters?.sort || 'nearest');
+  const [page, setPage] = useState(initialStatus ? 1 : savedFilters?.page || 1);
+  const [isCreateOpen, setIsCreateOpen] = useState(false);
+  const [editProject, setEditProject] = useState<Project | null>(null);
+  const [dialog, setDialog] = useState<{ project: Project; kind: 'status' | 'complete' | 'cancel' } | null>(null);
+  const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    savedFilters = { search, status: statusFilter, manager: managerFilter, sort: sortBy, page };
+  }, [search, statusFilter, managerFilter, sortBy, page]);
+
+  useEffect(() => {
+    const close = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpenId(null);
+    };
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, []);
+
+  const getStatusBadge = (status: string) => {
+    switch (status) {
+      case 'HOAN_THANH': return { label: 'Hoàn thành', className: 'bg-emerald-100 text-emerald-800 border-emerald-200' };
+      case 'DANG_THUC_HIEN': return { label: 'Đang triển khai', className: 'bg-blue-100 text-blue-800 border-blue-200' };
+      case 'TAM_DUNG': return { label: 'Tạm dừng', className: 'bg-amber-100 text-amber-800 border-amber-200' };
+      case 'HUY': return { label: 'Hủy', className: 'bg-slate-200 text-slate-600 line-through border-slate-300' };
+      default: return { label: 'Lập kế hoạch', className: 'bg-slate-100 text-slate-700 border-slate-200' };
+    }
+  };
+
+  const managers = staff.filter(s => s.roleTitle === 'QUAN_LY');
+  const countBy = (st: string) => projects.filter(p => p.status === st).length;
 
   const filtered = projects.filter(p => {
     if (statusFilter !== 'all' && p.status !== statusFilter) return false;
-    if (search.trim() && !p.name.toLowerCase().includes(search.toLowerCase()) && !p.place.toLowerCase().includes(search.toLowerCase())) return false;
+    if (managerFilter !== 'all' && p.managerId !== managerFilter) return false;
+    if (search.trim()) {
+      const q = search.toLowerCase();
+      const hay = [p.name, p.code, p.place, p.clientName || p.client || ''].join(' ').toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
     return true;
+  }).sort((a, b) => {
+    if (sortBy === 'name') return a.name.localeCompare(b.name, 'vi');
+    if (sortBy === 'newest') return (b.createdAt || b.startDate).localeCompare(a.createdAt || a.startDate);
+    return toTime(a.dueDate) - toTime(b.dueDate);
   });
 
-  const handleCreate = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!name.trim()) return;
-
-    const mgrObj = staff.find(s => s.id === managerId);
-    onAddProject({
-      code: code.trim(),
-      name: name.trim(),
-      place: place.trim(),
-      client: client.trim(),
-      clientName: client.trim(),
-      managerId,
-      managerName: mgrObj?.name || 'Quản lý NMH',
-      startDate,
-      dueDate,
-      status: 'planning',
-      scopeSummary: scopeSummary.trim() || 'Triển khai hạ tầng điện nhẹ ELV theo thiết kế phê duyệt.',
-      totalFloorArea
-    });
-
-    setIsCreateOpen(false);
-    setName('');
-    setPlace('');
-    setClient('');
-  };
-
-  const stages: Array<'Khảo sát' | 'Thiết kế' | 'Xây dựng' | 'Hoàn thiện' | 'Nghiệm thu'> = [
-    'Khảo sát', 'Thiết kế', 'Xây dựng', 'Hoàn thiện', 'Nghiệm thu'
-  ];
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const currentPage = Math.min(page, totalPages);
+  const pageItems = filtered.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
 
   return (
-    <div className="space-y-6">
-      {/* Header and Add button */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <h2 className="text-xl font-bold text-[#0D1A36] tracking-tight">
-            Quản Lý Danh Mục Dự Án &amp; Công Trình
-          </h2>
-          <p className="text-xs text-slate-500 mt-0.5">
-            Cấu trúc 3 cấp chuẩn hóa: Dự án → Hạng mục → Công việc (Theo đề tài nghiên cứu NMH)
-          </p>
-        </div>
+    <div className="space-y-4">
+      {toast.node}
 
-        <button
-          onClick={() => setIsCreateOpen(true)}
-          className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold rounded-lg bg-[#152A55] text-white hover:bg-[#1E3A75] shadow-xs transition-colors self-start sm:self-auto"
-        >
-          <Plus className="w-3.5 h-3.5" /> Tạo dự án mới
-        </button>
+      {/* 1. Tiêu đề trang: "Dự án và Hạng mục", không có dòng mô tả */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-1 border-b border-slate-200">
+        <h1 className="text-xl font-bold text-[#0D1A36] tracking-tight">Dự án và Hạng mục</h1>
+        {canEdit && (
+          <button
+            type="button"
+            onClick={() => setIsCreateOpen(true)}
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold rounded-xl bg-blue-700 text-white hover:bg-blue-800 shadow-xs transition-all cursor-pointer self-start sm:self-auto"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            <span>Tạo dự án mới</span>
+          </button>
+        )}
       </div>
 
-      {/* Filter and Search Bar */}
-      <div className="bg-white p-3.5 rounded-xl border border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-3 shadow-xs">
-        <div className="relative w-full sm:w-80">
+      {/* 2. Tìm kiếm và bộ lọc */}
+      <div className="bg-white p-3 rounded-xl border border-slate-200 flex flex-col md:flex-row items-center justify-between gap-3 shadow-2xs text-xs">
+        <div className="relative w-full md:w-96">
           <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
           <input
             type="text"
-            placeholder="Tìm theo tên dự án, vị trí, chủ đầu tư..."
+            placeholder="Tìm theo mã, tên dự án, địa điểm, khách hàng..."
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="w-full text-xs pl-8 pr-3 py-1.5 bg-slate-50 border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-[#152A55]/20"
+            onChange={(e) => { setSearch(e.target.value); setPage(1); }}
+            className="w-full text-xs pl-8 pr-3 py-1.5 bg-slate-50 border border-slate-300 rounded-lg focus:outline-blue-600 font-medium"
           />
         </div>
 
-        <div className="flex items-center gap-2 w-full sm:w-auto">
-          <span className="text-xs text-slate-500 whitespace-nowrap">Lọc trạng thái:</span>
+        <div className="flex items-center gap-2 w-full md:w-auto flex-wrap sm:flex-nowrap">
           <select
             value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-            className="text-xs bg-slate-50 border border-slate-300 rounded-lg px-2.5 py-1.5 text-slate-700 w-full sm:w-auto"
+            onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }}
+            className="px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg text-slate-800 font-medium focus:outline-blue-600"
           >
             <option value="all">Tất cả dự án ({projects.length})</option>
-            <option value="in_progress">Đang triển khai</option>
-            <option value="planning">Lập kế hoạch</option>
-            <option value="completed">Đã hoàn thành</option>
+            {['LAP_KE_HOACH', 'DANG_THUC_HIEN', 'TAM_DUNG', 'HOAN_THANH', 'HUY'].map(st => (
+              <option key={st} value={st}>{PROJECT_STATUS_LABEL[st]} ({countBy(st)})</option>
+            ))}
+          </select>
+
+          <select
+            value={managerFilter}
+            onChange={(e) => { setManagerFilter(e.target.value); setPage(1); }}
+            className="px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg text-slate-800 font-medium focus:outline-blue-600"
+          >
+            <option value="all">Mọi người phụ trách</option>
+            {managers.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+          </select>
+
+          <select
+            value={sortBy}
+            onChange={(e) => setSortBy(e.target.value as any)}
+            className="px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg text-slate-800 font-medium focus:outline-blue-600"
+          >
+            <option value="nearest">Hạn gần nhất</option>
+            <option value="newest">Mới tạo</option>
+            <option value="name">Tên A–Z</option>
           </select>
         </div>
       </div>
 
-      {/* Projects List */}
+      {statusFilter !== 'all' && (
+        <div className="flex items-center gap-2 text-[11px] text-slate-600">
+          <span>Bộ lọc: <strong>{PROJECT_STATUS_LABEL[statusFilter]}</strong></span>
+          <button type="button" onClick={() => setStatusFilter('all')} className="text-blue-700 hover:underline font-semibold cursor-pointer">Xóa bộ lọc</button>
+        </div>
+      )}
+
+      {/* 3. Danh sách thẻ dự án */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {filtered.map((project) => {
-          const projectTasks = tasks.filter(t => t.projectId === project.id);
-          const progress = calculateProjectProgress(projectTasks);
-          const manager = staff.find(s => s.id === project.managerId);
+        {pageItems.length === 0 ? (
+          <div className="col-span-full p-8 bg-white rounded-xl border border-slate-200 text-center text-slate-500 text-xs">
+            {projects.length === 0 ? 'Chưa có dự án nào trong phạm vi của bạn.' : 'Không tìm thấy dự án phù hợp.'}
+          </div>
+        ) : (
+          pageItems.map((project) => {
+            const projectTasks = tasks.filter(t => t.projectId === project.id);
+            const progress = completionRate(projectTasks);
+            const badge = getStatusBadge(project.status);
+            const overdueDays = (project.status === 'LAP_KE_HOACH' || project.status === 'DANG_THUC_HIEN' || project.status === 'TAM_DUNG')
+              ? overdueDaysOf(project.dueDate) : 0;
+            const projCats = categories.filter(c => c.projectId === project.id).sort((a, b) => a.orderNum - b.orderNum);
+            const menu = projectMenuItems(project);
 
-          return (
-            <div
-              key={project.id}
-              onClick={() => onSelectProject(project.id)}
-              className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs hover:border-[#152A55] hover:shadow-md transition-all cursor-pointer flex flex-col justify-between group"
-            >
-              <div>
-                {/* Header */}
-                <div className="flex items-start justify-between gap-3 mb-2">
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <span className="font-mono text-[11px] font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded">
-                        {project.code}
-                      </span>
-                      <span className="text-[10px] px-2 py-0.5 rounded-full font-medium bg-blue-50 text-blue-700 border border-blue-200">
-                        {project.status === 'in_progress' ? 'Đang triển khai' : project.status}
-                      </span>
+            return (
+              <div
+                key={project.id}
+                onClick={() => onSelectProject(project.id)}
+                className={`bg-white rounded-xl border p-4 shadow-2xs hover:border-blue-700 hover:shadow-md transition-all cursor-pointer flex flex-col justify-between group ${
+                  project.status === 'HUY' ? 'border-slate-200 bg-slate-50/60 opacity-80' : 'border-slate-200'
+                }`}
+              >
+                <div>
+                  <div className="flex items-start justify-between gap-3 mb-2">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="font-mono text-[11px] font-bold text-blue-800 bg-blue-50 px-2 py-0.5 rounded border border-blue-100">
+                          {project.code}
+                        </span>
+                        <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold border ${badge.className}`}>
+                          {badge.label}
+                        </span>
+                        {overdueDays > 0 && (
+                          <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-red-100 text-red-700 border border-red-200">
+                            Quá hạn {overdueDays} ngày
+                          </span>
+                        )}
+                      </div>
+                      <h3 className={`text-sm font-bold mt-1.5 leading-snug group-hover:text-blue-800 transition-colors ${
+                        project.status === 'HUY' ? 'text-slate-500' : 'text-[#0D1A36]'
+                      }`}>
+                        {project.name}
+                      </h3>
                     </div>
-                    <h3 className="text-sm font-bold text-[#0D1A36] group-hover:text-[#152A55] transition-colors mt-1">
-                      {project.name}
-                    </h3>
-                  </div>
 
-                  <div className="text-right shrink-0">
-                    <span className="text-xl font-bold font-mono text-[#152A55] tabular-nums">
-                      {progress}%
-                    </span>
-                    <span className="block text-[10px] text-slate-400 font-medium">hoàn thành</span>
-                  </div>
-                </div>
+                    <div className="flex items-start gap-1 shrink-0">
+                      <div className="text-right">
+                        {project.status === 'HUY' ? (
+                          <span className="text-[11px] font-medium text-slate-400">Đã hủy</span>
+                        ) : progress !== null ? (
+                          <>
+                            <span className="text-xl font-bold font-mono text-blue-800 tabular-nums">{progress}%</span>
+                            <span className="block text-[10px] text-slate-400 font-medium">hoàn thành</span>
+                          </>
+                        ) : (
+                          <span className="text-[11px] font-medium text-slate-400">Chưa có công việc</span>
+                        )}
+                      </div>
 
-                <div className="flex items-center gap-4 text-xs text-slate-500 mb-3 flex-wrap">
-                  <span className="flex items-center gap-1">
-                    <MapPin className="w-3 h-3 text-slate-400" /> {project.place}
-                  </span>
-                  <span className="flex items-center gap-1">
-                    <Building className="w-3 h-3 text-slate-400" /> {project.client}
-                  </span>
-                </div>
-
-                {/* 5-Stage progress bar */}
-                <div className="my-3">
-                  <div className="grid grid-cols-5 gap-1.5">
-                    {stages.map((stage) => {
-                      const stageTasks = projectTasks.filter(t => t.stage === stage);
-                      const status = getStageStatus(stageTasks);
-
-                      let barStyle = 'bg-slate-100 border border-dashed border-slate-300';
-                      if (status === 'plan') barStyle = 'bg-amber-100 border border-amber-400';
-                      if (status === 'doing') barStyle = 'bg-blue-100 border border-blue-500';
-                      if (status === 'done') barStyle = 'bg-emerald-600 border border-emerald-600';
-
-                      return (
-                        <div key={stage} className="text-center">
-                          <div className={`h-2 rounded-xs ${barStyle}`} />
-                          <div className="text-[10px] text-slate-500 mt-1 truncate">
-                            {stage}
+                      {/* Menu ba chấm của thẻ (thành phần 8) */}
+                      <div className="relative" ref={menuOpenId === project.id ? menuRef : undefined}>
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); setMenuOpenId(menuOpenId === project.id ? null : project.id); }}
+                          className="p-1 rounded-md text-slate-400 hover:text-slate-700 hover:bg-slate-100 cursor-pointer"
+                          title="Thao tác"
+                        >
+                          <MoreVertical className="w-4 h-4" />
+                        </button>
+                        {menuOpenId === project.id && (
+                          <div className="absolute right-0 top-7 z-20 w-52 bg-white border border-slate-200 rounded-xl shadow-xl py-1 text-xs" onClick={e => e.stopPropagation()}>
+                            <button type="button" className="w-full text-left px-3 py-2 hover:bg-slate-50 cursor-pointer" onClick={() => { setMenuOpenId(null); onSelectProject(project.id); }}>Xem chi tiết</button>
+                            {canEdit && menu.edit && (
+                              <button type="button" className="w-full text-left px-3 py-2 hover:bg-slate-50 cursor-pointer" onClick={() => { setMenuOpenId(null); setEditProject(project); }}>Sửa thông tin</button>
+                            )}
+                            {canEdit && menu.status && (
+                              <button type="button" className="w-full text-left px-3 py-2 hover:bg-slate-50 cursor-pointer" onClick={() => { setMenuOpenId(null); setDialog({ project, kind: 'status' }); }}>Đổi trạng thái</button>
+                            )}
+                            {canEdit && menu.complete && (
+                              <button type="button" className="w-full text-left px-3 py-2 hover:bg-slate-50 cursor-pointer text-emerald-700" onClick={() => { setMenuOpenId(null); setDialog({ project, kind: 'complete' }); }}>Xác nhận hoàn thành dự án</button>
+                            )}
+                            {canEdit && menu.cancel && (
+                              <button type="button" className="w-full text-left px-3 py-2 hover:bg-red-50 cursor-pointer text-red-600" onClick={() => { setMenuOpenId(null); setDialog({ project, kind: 'cancel' }); }}>Hủy dự án</button>
+                            )}
                           </div>
-                        </div>
-                      );
-                    })}
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="space-y-1 text-xs text-slate-500 mb-3">
+                    <div className="flex items-center gap-1.5 truncate">
+                      <MapPin className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                      <span className="truncate">{project.place}</span>
+                    </div>
+                    <div className="flex items-center gap-1.5 truncate">
+                      <Building className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                      <span className="truncate">Khách hàng: <strong>{project.clientName || project.client}</strong></span>
+                    </div>
+                  </div>
+
+                  {/* Dải tiến độ theo hạng mục: mỗi đoạn là một hạng mục của dự án */}
+                  <div className="my-2.5 p-2 bg-slate-50/80 rounded-lg border border-slate-100 space-y-1.5">
+                    <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Hạng mục thi công</div>
+                    {projCats.length === 0 ? (
+                      <div className="text-[11px] text-slate-400 italic">Chưa có hạng mục</div>
+                    ) : (
+                      <div className="flex gap-1.5">
+                        {projCats.map(cat => {
+                          const st = getCategoryStatus(projectTasks.filter(t => t.categoryId === cat.id));
+                          return (
+                            <div key={cat.id} className="flex-1 min-w-0" title={`${cat.code} · ${cat.name} – ${st.label}`}>
+                              <div className={`h-2 rounded-full ${st.bar}`} />
+                              <div className="text-[10px] text-slate-600 font-semibold truncate mt-1">{cat.name}</div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
                 </div>
 
-                <p className="text-xs text-slate-600 line-clamp-2 leading-relaxed bg-slate-50/60 p-2.5 rounded-lg border border-slate-100 mb-3">
-                  {project.scopeSummary}
-                </p>
+                <div className="pt-2.5 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500 flex-wrap gap-2">
+                  <span className="flex items-center gap-1">
+                    <User className="w-3.5 h-3.5 text-slate-400" />
+                    <span>Phụ trách: <strong>{project.managerName || staff.find(s => s.id === project.managerId)?.name}</strong></span>
+                  </span>
+                  <span className="flex items-center gap-1 font-mono text-slate-700 font-medium">
+                    <Calendar className="w-3.5 h-3.5 text-slate-400" />
+                    <span>Hạn: {formatDate(project.dueDate)}</span>
+                  </span>
+                </div>
               </div>
-
-              {/* Footer */}
-              <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
-                <span className="flex items-center gap-1">
-                  <User className="w-3.5 h-3.5 text-slate-400" /> Phụ trách: <strong>{manager?.name}</strong>
-                </span>
-                <span className="flex items-center gap-1 font-mono text-slate-600">
-                  <Calendar className="w-3.5 h-3.5 text-slate-400" /> Hạn: {project.dueDate}
-                </span>
-              </div>
-            </div>
-          );
-        })}
+            );
+          })
+        )}
       </div>
 
-      {/* Modal: Create Project */}
+      <Pagination page={currentPage} pageSize={PAGE_SIZE} total={filtered.length} unit="dự án" onChange={setPage} />
+
       {isCreateOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="bg-white rounded-xl shadow-xl max-w-lg w-full p-5 space-y-4">
-            <div className="flex items-center justify-between pb-2 border-b border-slate-200">
-              <h3 className="text-sm font-bold text-slate-900">Tạo mới dự án thi công điện nhẹ</h3>
-              <button onClick={() => setIsCreateOpen(false)} className="text-slate-400 hover:text-slate-700">✕</button>
-            </div>
-
-            <form onSubmit={handleCreate} className="space-y-3 text-xs">
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-slate-600 font-medium mb-1">Mã dự án</label>
-                  <input
-                    type="text"
-                    required
-                    value={code}
-                    onChange={(e) => setCode(e.target.value)}
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-slate-800 font-mono"
-                  />
-                </div>
-                <div>
-                  <label className="block text-slate-600 font-medium mb-1">Quy mô / Diện tích</label>
-                  <input
-                    type="text"
-                    value={totalFloorArea}
-                    onChange={(e) => setTotalFloorArea(e.target.value)}
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-slate-800 font-mono"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-slate-600 font-medium mb-1">Tên dự án / Công trình</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="Ví dụ: Tòa văn phòng thông minh Licogi..."
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-slate-800"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-slate-600 font-medium mb-1">Địa điểm thi công</label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="Quận / Tỉnh thành..."
-                    value={place}
-                    onChange={(e) => setPlace(e.target.value)}
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-slate-800"
-                  />
-                </div>
-                <div>
-                  <label className="block text-slate-600 font-medium mb-1">Chủ đầu tư / Đối tác</label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="Tên cơ quan, doanh nghiệp..."
-                    value={client}
-                    onChange={(e) => setClient(e.target.value)}
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-slate-800"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-slate-600 font-medium mb-1">Kỹ sư phụ trách NMH</label>
-                  <select
-                    value={managerId}
-                    onChange={(e) => setManagerId(e.target.value)}
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-slate-800"
-                  >
-                    {staff.map(s => (
-                      <option key={s.id} value={s.id}>{s.name} - {s.roleTitle}</option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-slate-600 font-medium mb-1">Hạn hoàn thành</label>
-                  <input
-                    type="date"
-                    required
-                    value={dueDate}
-                    onChange={(e) => setDueDate(e.target.value)}
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-slate-800 font-mono"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-slate-600 font-medium mb-1">Tóm tắt phạm vi kỹ thuật</label>
-                <textarea
-                  rows={2}
-                  placeholder="Hệ thống mạng LAN, camera quan sát, máng cáp, âm thanh PA..."
-                  value={scopeSummary}
-                  onChange={(e) => setScopeSummary(e.target.value)}
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-slate-800"
-                />
-              </div>
-
-              <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-200">
-                <button
-                  type="button"
-                  onClick={() => setIsCreateOpen(false)}
-                  className="px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-100 rounded-lg"
-                >
-                  Hủy
-                </button>
-                <button
-                  type="submit"
-                  className="px-4 py-1.5 text-xs font-semibold bg-[#152A55] text-white rounded-lg hover:bg-[#1E3A75]"
-                >
-                  Lưu dự án
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
+        <ProjectFormModal
+          onClose={() => setIsCreateOpen(false)}
+          onSaved={(p) => { setIsCreateOpen(false); toast.show(`Đã tạo dự án ${p.code}.`); onSelectProject(p.id); }}
+        />
+      )}
+      {editProject && (
+        <ProjectFormModal
+          project={editProject}
+          onClose={() => setEditProject(null)}
+          onSaved={(p) => { setEditProject(null); toast.show(`Đã lưu thay đổi dự án ${p.code}.`); }}
+        />
+      )}
+      {dialog && (
+        <ProjectStatusDialog
+          project={dialog.project}
+          kind={dialog.kind}
+          onClose={() => setDialog(null)}
+          onDone={(msg) => { setDialog(null); toast.show(msg); }}
+          onViewTasks={() => { setDialog(null); onSelectProject(dialog.project.id); }}
+        />
       )}
     </div>
   );

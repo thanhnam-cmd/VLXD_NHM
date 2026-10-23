@@ -1,615 +1,781 @@
-import React, { useState, useMemo } from 'react';
-import { Project, Task, Staff, Assignment, StaffLeave, TaskStage } from '../types/index.ts';
-import { checkScheduleConflict } from '../utils/conflictChecker.ts';
-import { 
-  CalendarClock, 
-  AlertCircle, 
-  CheckCircle2, 
-  User, 
-  Trash2, 
-  Calendar, 
-  Building2, 
-  Plus, 
-  Coffee, 
-  Clock,
-  ShieldAlert
-} from 'lucide-react';
+import React, { useMemo, useState } from 'react';
+import { Assignment, StaffLeave, Staff } from '../types/index.ts';
+import { useStore } from '../state/store.tsx';
+import { DEMO_QUERY_TIME } from '../utils/progressCalculator.ts';
+import {
+  formatDate, formatDateTime, toDbDateTime, toTime, overlaps, isRecordActive, projectAcceptsAssignments, isTaskOpen, isProjectOpen
+} from '../utils/domain.ts';
+import { CalendarClock, AlertCircle, CheckCircle2, Plus, ShieldAlert, Search, AlertTriangle } from 'lucide-react';
+import { useToast, Modal, Drawer, Label, Hint, ErrorBox, inputCls, btnPrimary, btnSecondary, ConfirmDialog, StatusBadge } from '../components/ui.tsx';
+import { EditAssignmentModal, CancelAssignmentDialog } from '../components/AssignmentDialogs.tsx';
+import { ExternalTeamsTab } from './ExternalTeamsTab.tsx';
 
-interface AssignmentViewProps {
-  projects: Project[];
-  tasks: Task[];
-  staff: Staff[];
-  assignments: Assignment[];
-  leaves: StaffLeave[];
-  draftSelection?: { projectId: string; stage?: TaskStage; taskId?: string };
-  onAddAssignment: (assignment: Omit<Assignment, 'id' | 'createdAt'>) => { success: boolean; message?: string };
-  onCancelAssignment: (assignmentId: string) => void;
-  onAddLeave: (leave: Omit<StaffLeave, 'id' | 'recordedAt'>) => void;
-  onCancelLeave: (leaveId: string) => void;
+export interface AssignmentDraft {
+  projectId: string;
+  taskId?: string;
 }
 
-export const AssignmentView: React.FC<AssignmentViewProps> = ({
-  projects,
-  tasks,
-  staff,
-  assignments,
-  leaves,
-  draftSelection,
-  onAddAssignment,
-  onCancelAssignment,
-  onAddLeave,
-  onCancelLeave
-}) => {
-  const [activeSubTab, setActiveSubTab] = useState<'assignments' | 'leaves' | 'contractor'>('assignments');
+interface AssignmentViewProps {
+  initialTab?: 'assignments' | 'leaves' | 'contractor';
+  initialFilter?: 'unassigned' | 'affected';
+  draft?: AssignmentDraft;
+}
 
-  // Form state
-  const [selectedProjectId, setSelectedProjectId] = useState<string>(
-    draftSelection?.projectId || projects[0]?.id || ''
-  );
-  const availableTasks = tasks.filter(t => t.projectId === selectedProjectId && t.status !== 'cancelled' && t.status !== 'done');
-  const [selectedTaskId, setSelectedTaskId] = useState<string>(
-    draftSelection?.taskId || (availableTasks[0]?.id || '')
-  );
-  const [selectedStaffId, setSelectedStaffId] = useState<string>(staff[0]?.id || '');
-  const [startDate, setStartDate] = useState<string>('2026-10-16');
-  const [endDate, setEndDate] = useState<string>('2026-10-28');
-  const [notes, setNotes] = useState<string>('');
-  const [toastMessage, setToastMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+const PROJECT_COLORS = ['bg-blue-500', 'bg-emerald-500', 'bg-purple-500', 'bg-amber-500', 'bg-rose-500', 'bg-cyan-500', 'bg-indigo-500', 'bg-lime-600', 'bg-orange-500', 'bg-teal-500'];
 
-  // Leave form state
-  const [isLeaveModalOpen, setIsLeaveModalOpen] = useState(false);
-  const [leaveStaffId, setLeaveStaffId] = useState<string>(staff[0]?.id || '');
-  const [leaveStart, setLeaveStart] = useState<string>('2026-11-01');
-  const [leaveEnd, setLeaveEnd] = useState<string>('2026-11-05');
-  const [leaveReason, setLeaveReason] = useState<string>('');
+const addDays = (ymd: string, n: number) => {
+  const d = new Date(ymd + 'T00:00:00');
+  d.setDate(d.getDate() + n);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+const mondayOf = (ymd: string) => {
+  const d = new Date(ymd + 'T00:00:00');
+  const wd = (d.getDay() + 6) % 7;
+  return addDays(ymd, -wd);
+};
 
-  // Live real-time conflict checking
-  const liveConflict = useMemo(() => {
-    if (!selectedStaffId || !startDate || !endDate) return { hasConflict: false };
-    return checkScheduleConflict(
-      selectedStaffId,
-      startDate,
-      endDate,
-      assignments,
-      leaves
-    );
-  }, [selectedStaffId, startDate, endDate, assignments, leaves]);
+export const AssignmentView: React.FC<AssignmentViewProps> = ({ initialTab, initialFilter, draft }) => {
+  const store = useStore();
+  const { visibleProjects, tasks, staff, assignments, leaves, categories, visibleProjectIds, findConflicts, createAssignments } = store;
+  const toast = useToast();
+  const [activeSubTab, setActiveSubTab] = useState<'assignments' | 'leaves' | 'contractor'>(initialTab || 'assignments');
+  const q = DEMO_QUERY_TIME;
+  const today = q.slice(0, 10);
 
-  const handleAssignSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
+  // ---------- MH-09: biểu mẫu lập phân công ----------
+  const assignableProjects = visibleProjects.filter(projectAcceptsAssignments);
+  const [projectId, setProjectId] = useState(draft?.projectId || '');
+  const [taskId, setTaskId] = useState(draft?.taskId || '');
+  const [staffIds, setStaffIds] = useState<string[]>([]);
+  const [staffQuery, setStaffQuery] = useState('');
+  const [sDate, setSDate] = useState('');
+  const [sTime, setSTime] = useState('');
+  const [eDate, setEDate] = useState('');
+  const [eTime, setETime] = useState('');
+  const [splitDaily, setSplitDaily] = useState(false);
+  const [skipSunday, setSkipSunday] = useState(false);
+  const [notes, setNotes] = useState('');
+  const [formErr, setFormErr] = useState<string | null>(null);
 
-    if (liveConflict.hasConflict) {
-      setToastMessage({
-        text: liveConflict.message || 'Không thể lưu phân công do có xung đột lịch!',
-        type: 'error'
+  const selectedProject = visibleProjects.find(p => p.id === projectId);
+  const selectedTask = tasks.find(t => t.id === taskId);
+  const projectTasks = tasks.filter(t => t.projectId === projectId && isTaskOpen(t));
+  const projCats = categories.filter(c => c.projectId === projectId).sort((a, b) => a.orderNum - b.orderNum);
+  const start = sDate && sTime ? toDbDateTime(`${sDate} ${sTime}`) : '';
+  const end = eDate && eTime ? toDbDateTime(`${eDate} ${eTime}`) : '';
+  const hasTime = !!start && !!end;
+
+  /** Danh sách khoảng cần tạo: một khoảng liên tục hoặc mỗi ngày một bản ghi */
+  const intervals = useMemo(() => {
+    if (!hasTime) return [] as { s: string; e: string }[];
+    if (!splitDaily) return [{ s: start, e: end }];
+    const out: { s: string; e: string }[] = [];
+    for (let d = sDate; d <= eDate; d = addDays(d, 1)) {
+      if (skipSunday && new Date(d + 'T00:00:00').getDay() === 0) continue;
+      out.push({ s: toDbDateTime(`${d} ${sTime}`), e: toDbDateTime(`${d} ${eTime}`) });
+      if (out.length > 120) break;
+    }
+    return out;
+  }, [start, end, splitDaily, skipSunday]);
+
+  const conflictsByStaff = useMemo(() => {
+    const m: Record<string, string[]> = {};
+    staffIds.forEach(id => {
+      const msgs: string[] = [];
+      intervals.forEach(iv => findConflicts(id, iv.s, iv.e).forEach(c => { if (!msgs.includes(c.message)) msgs.push(c.message); }));
+      m[id] = msgs;
+    });
+    return m;
+  }, [staffIds, intervals, assignments, leaves]);
+
+  const baseError = (() => {
+    if (!projectId || !taskId || staffIds.length === 0 || !hasTime) return null;
+    if (sDate < today) return 'Ngày bắt đầu không được trước ngày hiện tại. Vui lòng kiểm tra lại.';
+    if (toTime(end) <= toTime(start)) return 'Thời gian kết thúc phải sau thời gian bắt đầu.';
+    if (splitDaily && toTime(toDbDateTime(`${sDate} ${eTime}`)) <= toTime(toDbDateTime(`${sDate} ${sTime}`))) return 'Thời gian kết thúc phải sau thời gian bắt đầu.';
+    if (selectedTask && (toTime(start) < toTime(selectedTask.startDate) || toTime(end) > toTime(selectedTask.dueDate))) {
+      return `Khoảng phân công phải nằm trong thời gian của công việc (${formatDate(selectedTask.startDate)} – ${formatDate(selectedTask.dueDate)}).`;
+    }
+    return null;
+  })();
+  const anyConflict = Object.values(conflictsByStaff).some(l => l.length > 0);
+  // Cảnh báo cam (không chặn): phân công liền sát trước hoặc sau
+  const adjacentWarnings = useMemo(() => {
+    if (!hasTime) return [] as string[];
+    const w: string[] = [];
+    staffIds.forEach(id => {
+      assignments.filter(a => a.staffId === id && isRecordActive(a)).forEach(a => {
+        if (a.endDate === start || a.startDate === end) {
+          w.push(`${staff.find(s => s.id === id)?.name} có phân công ${a.taskCode || ''} liền sát (${formatDateTime(a.startDate)} – ${formatDateTime(a.endDate)}).`);
+        }
       });
-      return;
-    }
-
-    const res = onAddAssignment({
-      taskId: selectedTaskId,
-      projectId: selectedProjectId,
-      staffId: selectedStaffId,
-      startDate,
-      endDate,
-      status: 'active',
-      shiftNotes: notes.trim(),
-      assignedBy: 'Nguyễn Văn Hùng'
     });
+    return w;
+  }, [staffIds, start, end, assignments]);
+  const ready = !!projectId && !!taskId && staffIds.length > 0 && hasTime && !baseError && !anyConflict;
 
-    if (res.success) {
-      setToastMessage({ text: 'Phân công nhân sự thành công!', type: 'success' });
-      setNotes('');
-    } else {
-      setToastMessage({ text: res.message || 'Lỗi phân công', type: 'error' });
-    }
-
-    setTimeout(() => setToastMessage(null), 3000);
+  const resetForm = () => {
+    setProjectId(''); setTaskId(''); setStaffIds([]); setSDate(''); setSTime(''); setEDate(''); setETime('');
+    setSplitDaily(false); setSkipSunday(false); setNotes(''); setFormErr(null);
   };
 
-  const handleLeaveSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!leaveReason.trim()) return;
-
-    onAddLeave({
-      staffId: leaveStaffId,
-      startDate: leaveStart,
-      endDate: leaveEnd,
-      reason: leaveReason.trim(),
-      status: 'active',
-      recordedBy: 'Nguyễn Văn Hùng'
-    });
-
-    setIsLeaveModalOpen(false);
-    setLeaveReason('');
-    setToastMessage({ text: 'Đã ghi nhận lịch nghỉ/bận của nhân sự!', type: 'success' });
-    setTimeout(() => setToastMessage(null), 3000);
+  const submitAssignment = () => {
+    if (!projectId) return setFormErr('Vui lòng chọn dự án.');
+    if (!taskId) return setFormErr('Vui lòng chọn công việc.');
+    if (staffIds.length === 0) return setFormErr('Vui lòng chọn ít nhất một nhân sự.');
+    if (!hasTime) return setFormErr('Vui lòng nhập thời gian bắt đầu và kết thúc.');
+    if (baseError) return setFormErr(baseError);
+    const items = staffIds.flatMap(sid => intervals.map(iv => ({ taskId, staffId: sid, startDate: iv.s, endDate: iv.e, notes: notes.trim() || undefined })));
+    const r = createAssignments(items);
+    if (!r.ok) return setFormErr(r.message);
+    toast.show(r.message);
+    resetForm();
   };
 
-  const selectedStaffObj = staff.find(s => s.id === selectedStaffId);
+  // ---------- Bộ lọc & bảng phân công ----------
+  const [fProject, setFProject] = useState('');
+  const [fStaff, setFStaff] = useState('');
+  const [fFrom, setFFrom] = useState('');
+  const [fTo, setFTo] = useState('');
+  const [fStatus, setFStatus] = useState<'HIEU_LUC' | 'HUY' | 'all'>('HIEU_LUC');
+  const [viewMode, setViewMode] = useState<'list' | 'week'>('list');
+  const [weekStart, setWeekStart] = useState(mondayOf(today));
+  const [editAsg, setEditAsg] = useState<Assignment | null>(null);
+  const [cancelAsg, setCancelAsg] = useState<Assignment | null>(null);
+
+  const affectedIds = new Set(store.getAffectedAssignments().map(a => a.id));
+  const scopedAssignments = assignments.filter(a => visibleProjectIds.has(a.projectId));
+  const tableRows = scopedAssignments.filter(a => {
+    if (fStatus !== 'all' && a.status !== fStatus) return false;
+    if (fProject && a.projectId !== fProject) return false;
+    if (fStaff && a.staffId !== fStaff) return false;
+    if (fFrom && a.endDate.slice(0, 10) < fFrom) return false;
+    if (fTo && a.startDate.slice(0, 10) > fTo) return false;
+    return true;
+  }).sort((a, b) => b.startDate.localeCompare(a.startDate));
+
+  const unassignedTasks = tasks.filter(t => {
+    const p = visibleProjects.find(x => x.id === t.projectId);
+    if (!p || !isProjectOpen(p) || !isTaskOpen(t)) return false;
+    return !assignments.some(a => a.taskId === t.id && isRecordActive(a));
+  });
+
+  const projectColor = (pid: string) => PROJECT_COLORS[visibleProjects.findIndex(p => p.id === pid) % PROJECT_COLORS.length] || 'bg-slate-400';
+  const activeStaff = staff.filter(s => s.isActive);
+
+  // ---------- MH-10: Lịch nghỉ/bận ----------
+  const upcomingLeaves = leaves.filter(l => isRecordActive(l) && toTime(l.endDate) >= toTime(q));
+  const [lStaff, setLStaff] = useState('');
+  const [lFrom, setLFrom] = useState('');
+  const [lTo, setLTo] = useState('');
+  const [lStatus, setLStatus] = useState<'upcoming' | 'past' | 'cancelled' | 'all'>('upcoming');
+  const [onlyAffected, setOnlyAffected] = useState(initialFilter === 'affected');
+  const [leaveModal, setLeaveModal] = useState<{ leave?: StaffLeave } | null>(null);
+  const [afterSave, setAfterSave] = useState<{ leave: StaffLeave; affected: Assignment[] } | null>(null);
+  const [resolving, setResolving] = useState<StaffLeave | null>(null);
+  const [cancelLeave, setCancelLeave] = useState<StaffLeave | null>(null);
+
+  const affectedOfLeave = (l: StaffLeave) =>
+    toTime(l.endDate) > toTime(q) && isRecordActive(l)
+      ? assignments.filter(a => a.staffId === l.staffId && isRecordActive(a) && overlaps(a.startDate, a.endDate, l.startDate, l.endDate))
+      : [];
+
+  const leaveRows = leaves.filter(l => {
+    if (lStatus === 'upcoming' && !(isRecordActive(l) && toTime(l.endDate) >= toTime(q))) return false;
+    if (lStatus === 'past' && !(isRecordActive(l) && toTime(l.endDate) < toTime(q))) return false;
+    if (lStatus === 'cancelled' && l.status !== 'HUY') return false;
+    if (lStaff && l.staffId !== lStaff) return false;
+    if (lFrom && l.endDate.slice(0, 10) < lFrom) return false;
+    if (lTo && l.startDate.slice(0, 10) > lTo) return false;
+    if (onlyAffected && affectedOfLeave(l).length === 0) return false;
+    return true;
+  }).sort((a, b) => a.startDate.localeCompare(b.startDate));
+
+  const staffLabel = (s?: Staff) => s ? `${s.name} – ${s.roleTitleDisplay}` : '—';
 
   return (
     <div className="space-y-6">
-      {/* Toast */}
-      {toastMessage && (
-        <div className={`p-3 rounded-lg text-xs font-semibold flex items-center justify-between shadow-md animate-in fade-in ${
-          toastMessage.type === 'success' ? 'bg-emerald-600 text-white' : 'bg-red-600 text-white'
-        }`}>
-          <span>{toastMessage.text}</span>
-          <button onClick={() => setToastMessage(null)} className="ml-2 text-white/80 hover:text-white">✕</button>
-        </div>
-      )}
+      {toast.node}
 
-      {/* Header */}
+      {/* 1. Tiêu đề trang, 2. Ba tab */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <div>
-          <h2 className="text-xl font-bold text-[#0D1A36] tracking-tight">
-            Phân Công Nhân Sự &amp; Quản Lý Lịch Bận
-          </h2>
-          <p className="text-xs text-slate-500 mt-0.5">
-            Cơ chế kiểm soát xung đột lịch xuyên dự án theo quy tắc khoảng [bắt đầu, kết thúc) (UC-06)
-          </p>
-        </div>
-
-        {/* Sub tabs */}
+        <h2 className="text-xl font-bold text-[#0D1A36] tracking-tight">Phân công nhân sự và Quản lý lịch bận</h2>
         <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-lg border border-slate-200 text-xs font-medium">
-          <button
-            onClick={() => setActiveSubTab('assignments')}
-            className={`px-3 py-1.5 rounded-md transition-all ${
-              activeSubTab === 'assignments' ? 'bg-white text-[#152A55] font-semibold shadow-xs' : 'text-slate-600'
-            }`}
-          >
-            Lập &amp; Tra cứu phân công
-          </button>
-          <button
-            onClick={() => setActiveSubTab('leaves')}
-            className={`px-3 py-1.5 rounded-md transition-all ${
-              activeSubTab === 'leaves' ? 'bg-white text-[#152A55] font-semibold shadow-xs' : 'text-slate-600'
-            }`}
-          >
-            Lịch nghỉ/bận ({leaves.filter(l => l.status === 'active').length})
-          </button>
-          <button
-            onClick={() => setActiveSubTab('contractor')}
-            className={`px-3 py-1.5 rounded-md transition-all ${
-              activeSubTab === 'contractor' ? 'bg-white text-[#152A55] font-semibold shadow-xs' : 'text-slate-600'
-            }`}
-          >
-            Đội khoán ngoài (HTC)
-          </button>
+          {([['assignments', 'Lập và tra cứu phân công'], ['leaves', `Lịch nghỉ/bận (${upcomingLeaves.length})`], ['contractor', 'Đội thi công ngoài']] as const).map(([k, label]) => (
+            <button key={k} onClick={() => setActiveSubTab(k)}
+              className={`px-3 py-1.5 rounded-md transition-all cursor-pointer ${activeSubTab === k ? 'bg-white text-[#152A55] font-semibold shadow-xs' : 'text-slate-600'}`}>
+              {label}
+            </button>
+          ))}
         </div>
       </div>
 
       {activeSubTab === 'assignments' && (
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-          {/* Assignment Creation Form (5 cols) */}
-          <div className="lg:col-span-5 bg-white p-5 rounded-xl border border-slate-200 shadow-xs space-y-4">
-            <div className="border-b border-slate-100 pb-3">
-              <h3 className="text-sm font-bold text-[#0D1A36] flex items-center gap-2">
-                <CalendarClock className="w-4 h-4 text-[#152A55]" />
-                Lập Phân Công Công Việc Mới
-              </h3>
-              <p className="text-[11px] text-slate-500 mt-0.5">
-                Kiểm tra tự động trùng lịch với mọi dự án khác &amp; lịch nghỉ phép
-              </p>
+        <div className="space-y-6">
+          {initialFilter === 'unassigned' && (
+            <div className="p-4 bg-amber-50 border border-amber-200 rounded-xl text-xs">
+              <div className="font-bold text-amber-900 mb-2">Công việc chưa có nhân sự ({unassignedTasks.length}) – bấm một mục để điền sẵn Dự án và Công việc</div>
+              <div className="flex flex-wrap gap-2">
+                {unassignedTasks.map(t => {
+                  const p = visibleProjects.find(x => x.id === t.projectId);
+                  return (
+                    <button key={t.id} type="button"
+                      onClick={() => { if (projectAcceptsAssignments(p)) { setProjectId(t.projectId); setTaskId(t.id); setFormErr(null); } else setFormErr('Dự án đang tạm dừng, chưa thể lập phân công mới.'); }}
+                      className="px-2.5 py-1 rounded-lg bg-white border border-amber-300 hover:bg-amber-100 cursor-pointer text-left">
+                      <span className="font-mono font-bold text-amber-800">{p?.code} · {t.code}</span> {t.title}
+                    </button>
+                  );
+                })}
+                {unassignedTasks.length === 0 && <span className="text-amber-800">Không có công việc nào chưa có nhân sự.</span>}
+              </div>
             </div>
+          )}
 
-            <form onSubmit={handleAssignSubmit} className="space-y-3.5 text-xs">
-              {/* Project Select */}
-              <div>
-                <label className="block text-slate-600 font-semibold mb-1">Dự án áp dụng</label>
-                <select
-                  value={selectedProjectId}
-                  onChange={(e) => {
-                    setSelectedProjectId(e.target.value);
-                    const newTasks = tasks.filter(t => t.projectId === e.target.value && t.status !== 'cancelled');
-                    if (newTasks[0]) setSelectedTaskId(newTasks[0].id);
-                  }}
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-slate-800 font-medium"
-                >
-                  {projects.map(p => (
-                    <option key={p.id} value={p.id}>{p.name} ({p.code})</option>
-                  ))}
-                </select>
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+            {/* Biểu mẫu lập phân công */}
+            <div className="lg:col-span-5 bg-white p-5 rounded-xl border border-slate-200 shadow-xs space-y-4">
+              <div className="border-b border-slate-100 pb-3">
+                <h3 className="text-sm font-bold text-[#0D1A36] flex items-center gap-2">
+                  <CalendarClock className="w-4 h-4 text-[#152A55]" /> Lập phân công công việc mới
+                </h3>
+                <p className="text-[10px] text-slate-500 mt-0.5">(*) Trường bắt buộc</p>
               </div>
 
-              {/* Task Select */}
-              <div>
-                <label className="block text-slate-600 font-semibold mb-1">Công việc cần phân công</label>
-                <select
-                  value={selectedTaskId}
-                  onChange={(e) => setSelectedTaskId(e.target.value)}
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-slate-800"
-                >
-                  {availableTasks.length === 0 ? (
-                    <option value="">Không có công việc mở</option>
-                  ) : (
-                    availableTasks.map(t => (
-                      <option key={t.id} value={t.id}>[{t.stage}] {t.title}</option>
-                    ))
+              <div className="space-y-3.5 text-xs">
+                <div>
+                  <Label required>Dự án áp dụng</Label>
+                  <select value={projectId} onChange={e => { setProjectId(e.target.value); setTaskId(''); setStaffIds([]); setFormErr(null); }} className={inputCls}>
+                    <option value="">-- Chọn dự án --</option>
+                    {assignableProjects.map(p => <option key={p.id} value={p.id}>{p.code} – {p.name}</option>)}
+                  </select>
+                  <Hint>Dự án Tạm dừng, Hoàn thành và Hủy không nhận phân công mới.</Hint>
+                </div>
+
+                <div>
+                  <Label required>Công việc cần phân công</Label>
+                  <select value={taskId} disabled={!projectId} onChange={e => { setTaskId(e.target.value); setFormErr(null); }} className={inputCls}>
+                    <option value="">-- Chọn công việc --</option>
+                    {projCats.map(c => {
+                      const list = projectTasks.filter(t => t.categoryId === c.id);
+                      if (list.length === 0) return null;
+                      return (
+                        <optgroup key={c.id} label={`${c.code} · ${c.name}`}>
+                          {list.map(t => <option key={t.id} value={t.id}>{c.name} – {t.code} · {t.title}</option>)}
+                        </optgroup>
+                      );
+                    })}
+                  </select>
+                  {selectedTask && (
+                    <Hint>Thời gian công việc: {formatDateTime(selectedTask.startDate)} – {formatDateTime(selectedTask.dueDate)} · Phụ trách chính: {staff.find(s => s.id === selectedTask.assigneeId)?.name}</Hint>
                   )}
-                </select>
-              </div>
-
-              {/* Staff Select */}
-              <div>
-                <label className="block text-slate-600 font-semibold mb-1">Kỹ sư / Nhân sự thi công</label>
-                <select
-                  value={selectedStaffId}
-                  onChange={(e) => setSelectedStaffId(e.target.value)}
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-slate-800 font-medium"
-                >
-                  {staff.filter(s => s.isActive).map(s => (
-                    <option key={s.id} value={s.id}>
-                      {s.name} · {s.roleTitle} ({s.specialty})
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Dates */}
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-slate-600 font-semibold mb-1">Bắt đầu từ</label>
-                  <input
-                    type="date"
-                    required
-                    value={startDate}
-                    onChange={(e) => setStartDate(e.target.value)}
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg font-mono text-slate-800"
-                  />
                 </div>
+
                 <div>
-                  <label className="block text-slate-600 font-semibold mb-1">Đến hết ngày</label>
-                  <input
-                    type="date"
-                    required
-                    value={endDate}
-                    onChange={(e) => setEndDate(e.target.value)}
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg font-mono text-slate-800"
-                  />
+                  <Label required>Nhân sự thi công</Label>
+                  <div className="relative mb-1.5">
+                    <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                    <input value={staffQuery} onChange={e => setStaffQuery(e.target.value)} placeholder="Tìm theo họ tên, chức danh, chuyên môn" className={`${inputCls} pl-8`} />
+                  </div>
+                  <div className="max-h-44 overflow-y-auto border border-slate-200 rounded-lg divide-y divide-slate-100">
+                    {activeStaff.filter(s => !staffQuery || `${s.name} ${s.roleTitleDisplay} ${s.specialty}`.toLowerCase().includes(staffQuery.toLowerCase())).map(s => {
+                      const busy = hasTime ? intervals.some(iv => findConflicts(s.id, iv.s, iv.e).length > 0) : null;
+                      return (
+                        <label key={s.id} className="flex items-center gap-2 px-2.5 py-1.5 hover:bg-slate-50 cursor-pointer">
+                          <input type="checkbox" checked={staffIds.includes(s.id)} onChange={e => setStaffIds(e.target.checked ? [...staffIds, s.id] : staffIds.filter(x => x !== s.id))} />
+                          <span className="flex-1">{s.name} – {s.roleTitleDisplay} – {s.specialty || 'Chưa cập nhật chuyên môn'}</span>
+                          {busy !== null && (
+                            <span className={`text-[10px] px-1.5 py-0.5 rounded font-semibold ${busy ? 'bg-red-50 text-red-600' : 'bg-emerald-50 text-emerald-700'}`}>{busy ? 'Trùng lịch' : 'Rảnh'}</span>
+                          )}
+                        </label>
+                      );
+                    })}
+                  </div>
+                  {staffIds.length > 0 && <Hint>Đã chọn {staffIds.length} nhân sự; mỗi người tạo một phân công riêng.</Hint>}
                 </div>
-              </div>
 
-              {/* Notes */}
-              <div>
-                <label className="block text-slate-600 font-semibold mb-1">Nội dung ca trực / Lưu ý thi công</label>
-                <input
-                  type="text"
-                  placeholder="Ví dụ: Giám sát đo kiểm máy Fluke, phối hợp thợ cáp..."
-                  value={notes}
-                  onChange={(e) => setNotes(e.target.value)}
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-slate-800"
-                />
-              </div>
-
-              {/* Live Conflict Banner */}
-              {liveConflict.hasConflict ? (
-                <div className="p-3 bg-red-50 border border-red-300 rounded-lg text-red-700 flex items-start gap-2.5">
-                  <ShieldAlert className="w-5 h-5 shrink-0 text-red-600 mt-0.5" />
-                  <div className="text-[11px] leading-relaxed">
-                    <div className="font-bold">CẢNH BÁO XUNG ĐỘT THỜI GIAN:</div>
-                    <div>{liveConflict.message}</div>
-                    <div className="text-red-500 font-mono text-[10px] mt-0.5">
-                      Hệ thống từ chối lưu phân công này để tránh quá tải hoặc trùng lấn nhân sự.
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <Label required>Từ ngày và giờ bắt đầu</Label>
+                    <div className="flex gap-1.5">
+                      <input type="date" value={sDate} onChange={e => { setSDate(e.target.value); if (!eDate) setEDate(e.target.value); }} className={`${inputCls} font-mono`} />
+                      <input type="time" value={sTime} onChange={e => setSTime(e.target.value)} className={`${inputCls} font-mono w-24`} />
+                    </div>
+                  </div>
+                  <div>
+                    <Label required>Đến ngày và giờ kết thúc</Label>
+                    <div className="flex gap-1.5">
+                      <input type="date" value={eDate} onChange={e => setEDate(e.target.value)} className={`${inputCls} font-mono`} />
+                      <input type="time" value={eTime} onChange={e => setETime(e.target.value)} className={`${inputCls} font-mono w-24`} />
                     </div>
                   </div>
                 </div>
-              ) : (
-                <div className="p-2.5 bg-emerald-50 border border-emerald-200 rounded-lg text-emerald-800 flex items-center gap-2 text-[11px]">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                  <span>Khoảng thời gian hợp lệ: Kỹ sư {selectedStaffObj?.name} sẵn sàng!</span>
+                <div className="flex gap-1.5">
+                  {([['Cả ngày', '08:00', '17:00'], ['Buổi sáng', '08:00', '12:00'], ['Buổi chiều', '13:00', '17:00']] as const).map(([l, a, b]) => (
+                    <button key={l} type="button" onClick={() => { setSTime(a); setETime(b); }} className="px-2.5 py-1 rounded-lg border border-slate-300 bg-white hover:bg-slate-100 font-semibold cursor-pointer">{l} ({a}–{b})</button>
+                  ))}
                 </div>
-              )}
 
-              {/* Submit */}
-              <button
-                type="submit"
-                disabled={liveConflict.hasConflict || !selectedTaskId}
-                className={`w-full py-2.5 px-4 rounded-lg font-semibold text-xs shadow-xs transition-colors flex items-center justify-center gap-1.5 ${
-                  liveConflict.hasConflict || !selectedTaskId
-                    ? 'bg-slate-300 text-slate-500 cursor-not-allowed'
-                    : 'bg-[#152A55] text-white hover:bg-[#1E3A75]'
-                }`}
-              >
-                <Plus className="w-4 h-4" />
-                Xác nhận lưu phân công
-              </button>
-            </form>
-          </div>
+                <div className="space-y-1">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input type="checkbox" checked={splitDaily} onChange={e => setSplitDaily(e.target.checked)} />
+                    Tạo một phân công riêng cho từng ngày trong khoảng đã chọn
+                  </label>
+                  {splitDaily && (
+                    <label className="flex items-center gap-2 cursor-pointer pl-5">
+                      <input type="checkbox" checked={skipSunday} onChange={e => setSkipSunday(e.target.checked)} /> Bỏ qua Chủ nhật
+                    </label>
+                  )}
+                </div>
 
-          {/* Right: Active Assignments by Staff (7 cols) */}
-          <div className="lg:col-span-7 space-y-4">
-            <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-xs">
-              <div className="flex items-center justify-between pb-3 border-b border-slate-100 mb-4">
                 <div>
-                  <h3 className="text-sm font-bold text-[#0D1A36]">
-                    Khối Lượng Phân Công Hiện Tại Của Kỹ Sư
-                  </h3>
-                  <p className="text-[11px] text-slate-500">
-                    Theo dõi trực quan các công việc đang mở xuyên suốt mọi dự án
-                  </p>
+                  <Label>Ghi chú phân công</Label>
+                  <textarea rows={2} maxLength={255} value={notes} onChange={e => setNotes(e.target.value)} placeholder="Ví dụ: Giám sát đo kiểm máy Fluke, phối hợp thợ cáp" className={inputCls} />
                 </div>
-                <span className="text-xs font-mono font-bold px-2 py-0.5 rounded bg-slate-100 text-slate-700">
-                  {assignments.filter(a => a.status === 'active').length} phân công
-                </span>
-              </div>
 
-              {/* Staff Cards */}
-              <div className="space-y-3">
-                {staff.map((s) => {
-                  const staffAssignments = assignments.filter(a => a.staffId === s.id && a.status === 'active');
-                  const staffActiveLeaves = leaves.filter(l => l.staffId === s.id && l.status === 'active');
-
-                  return (
-                    <div key={s.id} className="p-3.5 rounded-lg border border-slate-200 bg-slate-50/40">
-                      <div className="flex items-center justify-between mb-2">
-                        <div className="flex items-center gap-2.5">
-                          <div className="w-7 h-7 rounded-full bg-[#152A55] text-white flex items-center justify-center text-xs font-bold shrink-0">
-                            {s.name.slice(0, 2).toUpperCase()}
-                          </div>
-                          <div>
-                            <div className="font-bold text-xs text-slate-900">{s.name}</div>
-                            <div className="text-[11px] text-slate-500">{s.roleTitle} · {s.specialty}</div>
-                          </div>
-                        </div>
-
-                        <div className="text-right text-xs">
-                          {staffActiveLeaves.length > 0 && (
-                            <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 font-medium mr-2">
-                              Có lịch nghỉ
-                            </span>
-                          )}
-                          <span className="font-mono font-bold text-[#152A55]">
-                            {staffAssignments.length} việc mở
-                          </span>
-                        </div>
-                      </div>
-
-                      {/* Active Jobs for this engineer */}
-                      <div className="space-y-1.5 pt-1">
-                        {staffAssignments.length === 0 ? (
-                          <div className="text-[11px] text-slate-400 italic">
-                            Chưa có phân công nào trong thời gian này.
-                          </div>
-                        ) : (
-                          staffAssignments.map(asg => {
-                            const prj = projects.find(p => p.id === asg.projectId);
-                            const tsk = tasks.find(t => t.id === asg.taskId);
-                            return (
-                              <div 
-                                key={asg.id}
-                                className="bg-white p-2.5 rounded-md border border-slate-200 flex items-center justify-between text-xs"
-                              >
-                                <div className="min-w-0 pr-2">
-                                  <div className="font-semibold text-slate-800 truncate">
-                                    {prj?.name} · {tsk?.title}
-                                  </div>
-                                  <div className="text-[10px] text-slate-500 flex items-center gap-2">
-                                    <span>Hạng mục: {tsk?.stage}</span>
-                                    {asg.shiftNotes && <span>· Ghi chú: {asg.shiftNotes}</span>}
-                                  </div>
-                                </div>
-
-                                <div className="flex items-center gap-3 shrink-0">
-                                  <span className="font-mono text-[11px] text-slate-600">
-                                    {asg.startDate} → {asg.endDate}
-                                  </span>
-                                  <button
-                                    onClick={() => onCancelAssignment(asg.id)}
-                                    className="p-1 text-slate-400 hover:text-red-600 rounded transition-colors"
-                                    title="Hủy phân công này"
-                                    aria-label="Hủy phân công"
-                                  >
-                                    <Trash2 className="w-3.5 h-3.5" />
-                                  </button>
-                                </div>
-                              </div>
-                            );
-                          })
-                        )}
+                {/* 10. Vùng kiểm tra xung đột */}
+                {projectId && taskId && staffIds.length > 0 && hasTime && (
+                  baseError || anyConflict ? (
+                    <div className="p-3 bg-red-50 border border-red-300 rounded-lg text-red-700 flex items-start gap-2.5">
+                      <ShieldAlert className="w-5 h-5 shrink-0 text-red-600 mt-0.5" />
+                      <div className="text-[11px] leading-relaxed space-y-0.5">
+                        {baseError && <div>{baseError}</div>}
+                        {Object.values(conflictsByStaff).flat().map((m, i) => <div key={i}>{m}</div>)}
                       </div>
                     </div>
+                  ) : (
+                    <div className="p-2.5 bg-emerald-50 border border-emerald-200 rounded-lg text-emerald-800 flex items-center gap-2 text-[11px]">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                      <span>Khoảng thời gian hợp lệ: {staffIds.map(id => staff.find(s => s.id === id)?.name).join(', ')} sẵn sàng trong khoảng này.</span>
+                    </div>
+                  )
+                )}
+                {adjacentWarnings.length > 0 && !anyConflict && (
+                  <div className="p-2.5 bg-orange-50 border border-orange-200 rounded-lg text-orange-800 text-[11px] flex items-start gap-2">
+                    <AlertTriangle className="w-4 h-4 shrink-0" />
+                    <div>{adjacentWarnings.map((w, i) => <div key={i}>{w}</div>)}</div>
+                  </div>
+                )}
+                <ErrorBox message={formErr} />
+
+                <div className="flex gap-2">
+                  <button type="button" disabled={!ready} onClick={submitAssignment}
+                    className={`flex-1 py-2.5 px-4 rounded-lg font-semibold text-xs shadow-xs transition-colors flex items-center justify-center gap-1.5 ${ready ? 'bg-[#152A55] text-white hover:bg-[#1E3A75] cursor-pointer' : 'bg-slate-300 text-slate-500 cursor-not-allowed'}`}>
+                    <Plus className="w-4 h-4" /> Xác nhận lưu phân công
+                  </button>
+                  <button type="button" onClick={resetForm} className="px-4 py-2.5 rounded-lg border border-slate-300 font-semibold text-xs hover:bg-slate-100 cursor-pointer">Làm mới</button>
+                </div>
+              </div>
+            </div>
+
+            {/* 14. Khung khối lượng phân công của nhân sự */}
+            <div className="lg:col-span-7 bg-white p-5 rounded-xl border border-slate-200 shadow-xs">
+              <div className="flex items-center justify-between pb-3 border-b border-slate-100 mb-3">
+                <h3 className="text-sm font-bold text-[#0D1A36]">Khối lượng phân công của nhân sự</h3>
+                {fStaff && <button type="button" onClick={() => setFStaff('')} className="text-[11px] text-blue-600 hover:underline font-semibold cursor-pointer">Bỏ lọc nhân sự</button>}
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-[520px] overflow-y-auto">
+                {activeStaff.map(s => {
+                  const count = assignments.filter(a => a.staffId === s.id && isRecordActive(a) && toTime(a.endDate) > toTime(q)).length;
+                  return (
+                    <button key={s.id} type="button" onClick={() => setFStaff(s.id)}
+                      className={`p-2.5 rounded-lg border flex items-center justify-between text-left cursor-pointer hover:border-[#152A55] ${fStaff === s.id ? 'border-[#152A55] bg-blue-50/50' : 'border-slate-200 bg-slate-50/40'}`}>
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <div className="w-7 h-7 rounded-full bg-[#152A55] text-white flex items-center justify-center text-[10px] font-bold shrink-0">{s.name.split(' ').slice(-1)[0].slice(0, 2).toUpperCase()}</div>
+                        <div className="min-w-0">
+                          <div className="font-bold text-xs text-slate-900 truncate">{s.name}</div>
+                          <div className="text-[10px] text-slate-500 truncate">{s.roleTitleDisplay} · {s.specialty || 'Chưa cập nhật chuyên môn'}</div>
+                        </div>
+                      </div>
+                      <span className="font-mono font-bold text-[#152A55] text-xs shrink-0">{count} việc</span>
+                    </button>
                   );
                 })}
               </div>
             </div>
           </div>
-        </div>
-      )}
 
-      {/* Subtab 2: Staff Leaves (Lịch nghỉ/bận) */}
-      {activeSubTab === 'leaves' && (
-        <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-xs space-y-4">
-          <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-            <div>
-              <h3 className="text-sm font-bold text-[#0D1A36]">
-                Quản Lý Lịch Nghỉ &amp; Bận Của Nhân Sự (UC-05)
-              </h3>
-              <p className="text-[11px] text-slate-500">
-                Khoảng thời gian nghỉ/bận còn hiệu lực sẽ tự động ngăn chặn phân công thi công chồng lấn
-              </p>
+          {/* 12. Bộ lọc lịch phân công & 13. Bảng phân công */}
+          <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-xs space-y-3">
+            <div className="flex flex-wrap gap-2 items-center text-xs">
+              <select value={fProject} onChange={e => setFProject(e.target.value)} className="px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg">
+                <option value="">Mọi dự án</option>
+                {visibleProjects.map(p => <option key={p.id} value={p.id}>{p.code}</option>)}
+              </select>
+              <select value={fStaff} onChange={e => setFStaff(e.target.value)} className="px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg">
+                <option value="">Mọi nhân sự</option>
+                {staff.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+              <input type="date" value={fFrom} onChange={e => setFFrom(e.target.value)} className="px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg font-mono" />
+              <input type="date" value={fTo} onChange={e => setFTo(e.target.value)} className="px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg font-mono" />
+              <select value={fStatus} onChange={e => setFStatus(e.target.value as any)} className="px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg">
+                <option value="HIEU_LUC">Hiệu lực</option>
+                <option value="HUY">Đã hủy</option>
+                <option value="all">Tất cả</option>
+              </select>
+              <div className="ml-auto flex bg-slate-100 p-0.5 rounded-lg border border-slate-200">
+                <button type="button" onClick={() => setViewMode('list')} className={`px-2.5 py-1 rounded-md cursor-pointer ${viewMode === 'list' ? 'bg-white font-semibold shadow-xs' : ''}`}>Danh sách</button>
+                <button type="button" onClick={() => setViewMode('week')} className={`px-2.5 py-1 rounded-md cursor-pointer ${viewMode === 'week' ? 'bg-white font-semibold shadow-xs' : ''}`}>Lịch tuần</button>
+              </div>
             </div>
-            <button
-              onClick={() => setIsLeaveModalOpen(true)}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-[#152A55] text-white hover:bg-[#1E3A75]"
-            >
-              <Plus className="w-3.5 h-3.5" /> Ghi nhận lịch nghỉ mới
-            </button>
-          </div>
 
-          <div className="divide-y divide-slate-100">
-            {leaves.length === 0 ? (
-              <div className="p-6 text-center text-xs text-slate-400">Chưa có lịch nghỉ/bận nào được ghi nhận.</div>
+            {viewMode === 'list' ? (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead className="text-[10px] uppercase text-slate-500 border-b border-slate-200">
+                    <tr><th className="py-2 pr-3">Nhân sự</th><th className="py-2 pr-3">Công việc và Dự án</th><th className="py-2 pr-3">Thời gian</th><th className="py-2 pr-3">Trạng thái</th><th className="py-2 text-right">Thao tác</th></tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {tableRows.length === 0 ? (
+                      <tr><td colSpan={5} className="py-4 text-center text-slate-400">Không có phân công theo bộ lọc đã chọn.</td></tr>
+                    ) : tableRows.slice(0, 200).map(a => {
+                      const t = tasks.find(x => x.id === a.taskId);
+                      const p = visibleProjects.find(x => x.id === a.projectId);
+                      const canChange = isRecordActive(a) && p && isProjectOpen(p);
+                      return (
+                        <tr key={a.id}>
+                          <td className="py-2 pr-3 font-semibold">{staff.find(s => s.id === a.staffId)?.name || a.staffName}</td>
+                          <td className="py-2 pr-3">
+                            <div>{t?.code} · {t?.title}</div>
+                            <div className="text-[10px] text-slate-500">{p?.code}</div>
+                            {affectedIds.has(a.id) && <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-100 text-red-700 font-bold">Bị ảnh hưởng bởi lịch nghỉ/bận</span>}
+                          </td>
+                          <td className="py-2 pr-3 font-mono">{formatDateTime(a.startDate)} – {formatDateTime(a.endDate)}</td>
+                          <td className="py-2 pr-3"><StatusBadge status={a.status} kind="record" /></td>
+                          <td className="py-2 text-right whitespace-nowrap">
+                            {canChange && (
+                              <>
+                                <button type="button" onClick={() => setEditAsg(a)} className="px-2 py-1 text-blue-700 hover:bg-blue-50 rounded font-semibold cursor-pointer">Sửa</button>
+                                <button type="button" onClick={() => setCancelAsg(a)} className="px-2 py-1 text-red-600 hover:bg-red-50 rounded font-semibold cursor-pointer">Hủy phân công</button>
+                              </>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
             ) : (
-              leaves.map(l => {
-                const s = staff.find(x => x.id === l.staffId);
-                const isCancelled = l.status === 'cancelled';
-                return (
-                  <div key={l.id} className="py-3 flex items-center justify-between text-xs">
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="font-bold text-slate-800">{s?.name}</span>
-                        <span className={`text-[10px] px-2 py-0.5 rounded font-mono ${
-                          isCancelled ? 'bg-slate-100 text-slate-400 line-through' : 'bg-amber-50 text-amber-800 border border-amber-200'
-                        }`}>
-                          {isCancelled ? 'Đã hủy' : 'Hiệu lực'}
-                        </span>
-                      </div>
-                      <div className="text-slate-600 mt-0.5 font-medium">{l.reason}</div>
-                      <div className="text-[10px] text-slate-400 mt-0.5">
-                        Ghi nhận bởi {l.recordedBy} ngày {l.recordedAt}
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-4 shrink-0">
-                      <span className="font-mono text-slate-700">
-                        {l.startDate} <span className="text-slate-400">đến</span> {l.endDate}
-                      </span>
-                      {!isCancelled && (
-                        <button
-                          onClick={() => onCancelLeave(l.id)}
-                          className="px-2 py-1 text-xs text-red-600 hover:bg-red-50 rounded"
-                        >
-                          Hủy lịch
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                );
-              })
+              <div className="overflow-x-auto">
+                <div className="flex items-center gap-2 mb-2 text-xs">
+                  <button type="button" onClick={() => setWeekStart(addDays(weekStart, -7))} className="px-2 py-1 border border-slate-300 rounded cursor-pointer">‹ Tuần trước</button>
+                  <span className="font-semibold">{formatDate(weekStart)} – {formatDate(addDays(weekStart, 6))}</span>
+                  <button type="button" onClick={() => setWeekStart(addDays(weekStart, 7))} className="px-2 py-1 border border-slate-300 rounded cursor-pointer">Tuần sau ›</button>
+                </div>
+                <table className="w-full text-[10px] border border-slate-200">
+                  <thead>
+                    <tr className="bg-slate-50">
+                      <th className="p-1.5 text-left border-r border-slate-200 w-40">Nhân sự</th>
+                      {Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)).map(d => (
+                        <th key={d} className={`p-1.5 border-r border-slate-200 ${d === today ? 'bg-amber-50' : ''}`}>{['T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'CN'][(new Date(d + 'T00:00:00').getDay() + 6) % 7]} {formatDate(d).slice(0, 5)}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(fStaff ? staff.filter(s => s.id === fStaff) : activeStaff).map(s => (
+                      <tr key={s.id} className="border-t border-slate-100">
+                        <td className="p-1.5 border-r border-slate-200 font-semibold">{s.name}</td>
+                        {Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)).map(d => {
+                          const dayAsg = scopedAssignments.filter(a => a.staffId === s.id && (fStatus === 'all' || a.status === fStatus) && (!fProject || a.projectId === fProject) && overlaps(a.startDate, a.endDate, `${d} 00:00:00`, `${d} 23:59:59`));
+                          const dayLeaves = leaves.filter(l => l.staffId === s.id && isRecordActive(l) && overlaps(l.startDate, l.endDate, `${d} 00:00:00`, `${d} 23:59:59`));
+                          return (
+                            <td key={d} className="p-1 border-r border-slate-100 align-top space-y-0.5 min-w-[80px]">
+                              {dayAsg.map(a => (
+                                <div key={a.id} title={`${a.taskCode} · ${a.projectCode}`} className={`px-1 py-0.5 rounded text-white truncate ${projectColor(a.projectId)} ${a.status === 'HUY' ? 'opacity-40' : ''}`}>
+                                  {visibleProjects.find(p => p.id === a.projectId)?.code.slice(-3)} {a.taskCode}
+                                </div>
+                              ))}
+                              {dayLeaves.map(l => (
+                                <div key={l.id} title={l.reason} className="px-1 py-0.5 rounded text-slate-700 truncate" style={{ background: 'repeating-linear-gradient(45deg,#e2e8f0,#e2e8f0 4px,#cbd5e1 4px,#cbd5e1 8px)' }}>Nghỉ/bận</div>
+                              ))}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             )}
           </div>
         </div>
       )}
 
-      {/* Subtab 3: External Subcontractor (HTC) */}
-      {activeSubTab === 'contractor' && (
-        <div className="space-y-4">
-          <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-xs">
-            <div className="flex items-start justify-between gap-4 pb-4 border-b border-slate-100">
-              <div>
-                <span className="text-[10px] font-bold uppercase tracking-wider text-purple-700 bg-purple-50 px-2 py-0.5 rounded border border-purple-200">
-                  Hợp đồng khoán nhân công ngoài
-                </span>
-                <h3 className="text-base font-bold text-[#0D1A36] mt-1.5">
-                  Công ty TNHH Tư vấn và Thương mại HTC (Hải Phòng)
-                </h3>
-                <p className="text-xs text-slate-500">
-                  Địa chỉ: Số 1C190 Bãi Sậy - Hồng Bàng - Hải Phòng · MST: 0201889988
-                </p>
-              </div>
-
-              <div className="text-right bg-purple-50 p-3 rounded-lg border border-purple-200">
-                <div className="text-[10px] text-purple-700 font-semibold uppercase">Tổng giá trị báo giá</div>
-                <div className="text-base font-bold font-mono text-purple-950">1.406.998.000 VNĐ</div>
-              </div>
+      {/* ===================== MH-10 ===================== */}
+      {activeSubTab === 'leaves' && (
+        <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-xs space-y-4">
+          <div className="flex items-center justify-between pb-3 border-b border-slate-100 gap-3 flex-wrap">
+            <div className="flex flex-wrap gap-2 text-xs">
+              <select value={lStaff} onChange={e => setLStaff(e.target.value)} className="px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg">
+                <option value="">Mọi nhân sự</option>
+                {staff.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+              <input type="date" value={lFrom} onChange={e => setLFrom(e.target.value)} className="px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg font-mono" />
+              <input type="date" value={lTo} onChange={e => setLTo(e.target.value)} className="px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg font-mono" />
+              <select value={lStatus} onChange={e => setLStatus(e.target.value as any)} className="px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg">
+                <option value="upcoming">Sắp tới và đang diễn ra</option>
+                <option value="past">Đã qua</option>
+                <option value="cancelled">Đã hủy</option>
+                <option value="all">Tất cả</option>
+              </select>
+              {onlyAffected && <button type="button" onClick={() => setOnlyAffected(false)} className="px-2.5 py-1.5 rounded-lg bg-red-50 text-red-700 border border-red-200 font-semibold cursor-pointer">Đang lọc: có phân công bị ảnh hưởng ✕</button>}
             </div>
+            <button onClick={() => setLeaveModal({})} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-[#152A55] text-white hover:bg-[#1E3A75] cursor-pointer">
+              <Plus className="w-3.5 h-3.5" /> Ghi nhận lịch nghỉ mới
+            </button>
+          </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-4 text-xs">
-              <div className="p-3 rounded-lg bg-slate-50 border border-slate-100">
-                <span className="text-slate-400 block text-[10px] font-semibold uppercase">Đầu mối thi công</span>
-                <span className="font-bold text-slate-800 text-sm">Nguyễn Huy Hảo (Giám đốc)</span>
-                <div className="font-mono text-slate-500 mt-0.5">ĐT: 0975 722 896</div>
-              </div>
-
-              <div className="p-3 rounded-lg bg-slate-50 border border-slate-100">
-                <span className="text-slate-400 block text-[10px] font-semibold uppercase">Kỹ sư NMH điều phối</span>
-                <span className="font-bold text-slate-800 text-sm">Nguyễn Văn Hùng</span>
-                <div className="text-slate-500 mt-0.5">Chỉ huy trưởng công trình A1</div>
-              </div>
-
-              <div className="p-3 rounded-lg bg-slate-50 border border-slate-100">
-                <span className="text-slate-400 block text-[10px] font-semibold uppercase">Quy mô nhân sự giao khoán</span>
-                <span className="font-bold text-slate-800 text-sm">Tối thiểu 4 công nhân</span>
-                <div className="text-slate-500 mt-0.5">Lắp máng cáp &amp; kéo cáp Cat6</div>
-              </div>
-            </div>
-
-            <p className="text-xs text-slate-500 bg-amber-50/60 p-3 rounded-lg border border-amber-200 mt-4 leading-relaxed">
-              <strong>Lưu ý nghiệp vụ đề tài:</strong> Các thành viên đội thợ bên ngoài không tạo tài khoản nội bộ NMH. Tiến độ và kết quả thi công của đội thợ được Chỉ huy trưởng Nguyễn Văn Hùng xác nhận và báo cáo lên hệ thống theo phân hệ Nhật ký hiện trường.
-            </p>
+          <div className="divide-y divide-slate-100">
+            {leaveRows.length === 0 ? (
+              <div className="p-6 text-center text-xs text-slate-400">Không có lịch nghỉ/bận theo bộ lọc đã chọn.</div>
+            ) : leaveRows.map(l => {
+              const s = staff.find(x => x.id === l.staffId);
+              const affected = affectedOfLeave(l);
+              return (
+                <div key={l.id} className="py-3 flex items-center justify-between text-xs gap-3 flex-wrap">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-bold text-slate-800">{s?.name}</span>
+                      <span className="text-slate-500">{s?.roleTitleDisplay}</span>
+                      <StatusBadge status={l.status} kind="record" />
+                    </div>
+                    <div className="text-slate-600 mt-0.5 font-medium">{l.reason}</div>
+                    <div className="text-[10px] text-slate-400 mt-0.5">Ghi nhận bởi {l.recordedBy} lúc {formatDateTime(l.recordedAt)}</div>
+                    {l.status === 'HUY' && l.cancelReason && <div className="text-[10px] text-slate-500">Lý do hủy: {l.cancelReason}</div>}
+                    {affected.length > 0 && (
+                      <button type="button" onClick={() => setResolving(l)}
+                        className="text-[10px] text-red-600 bg-red-50 hover:bg-red-100 px-2 py-0.5 rounded font-bold border border-red-200 cursor-pointer flex items-center gap-1 mt-1">
+                        <AlertCircle className="w-3 h-3 text-red-500" /> Có {affected.length} phân công bị ảnh hưởng – Xử lý
+                      </button>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-3 shrink-0">
+                    <span className="font-mono text-slate-700">{formatDateTime(l.startDate)} – {formatDateTime(l.endDate)}</span>
+                    {isRecordActive(l) && (
+                      <>
+                        <button onClick={() => setLeaveModal({ leave: l })} className="px-2 py-1 text-xs text-blue-700 hover:bg-blue-50 rounded font-semibold cursor-pointer">Sửa</button>
+                        <button onClick={() => setCancelLeave(l)} className="px-2 py-1 text-xs text-red-600 hover:bg-red-50 rounded font-semibold cursor-pointer">Hủy lịch</button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
       )}
 
-      {/* Modal: Add Leave */}
-      {isLeaveModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-5 space-y-4 text-xs">
-            <div className="flex items-center justify-between pb-2 border-b border-slate-200">
-              <h3 className="text-sm font-bold text-slate-900">Ghi nhận lịch nghỉ/bận nhân sự</h3>
-              <button onClick={() => setIsLeaveModalOpen(false)} className="text-slate-400 hover:text-slate-700">✕</button>
-            </div>
+      {activeSubTab === 'contractor' && <ExternalTeamsTab />}
 
-            <form onSubmit={handleLeaveSubmit} className="space-y-3">
-              <div>
-                <label className="block text-slate-600 font-semibold mb-1">Nhân sự</label>
-                <select
-                  value={leaveStaffId}
-                  onChange={(e) => setLeaveStaffId(e.target.value)}
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-slate-800"
-                >
-                  {staff.map(s => (
-                    <option key={s.id} value={s.id}>{s.name} - {s.roleTitle}</option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-slate-600 font-semibold mb-1">Từ ngày</label>
-                  <input
-                    type="date"
-                    required
-                    value={leaveStart}
-                    onChange={(e) => setLeaveStart(e.target.value)}
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg font-mono"
-                  />
-                </div>
-                <div>
-                  <label className="block text-slate-600 font-semibold mb-1">Đến ngày</label>
-                  <input
-                    type="date"
-                    required
-                    value={leaveEnd}
-                    onChange={(e) => setLeaveEnd(e.target.value)}
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg font-mono"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-slate-600 font-semibold mb-1">Lý do nghỉ/bận</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="Ví dụ: Đào tạo chứng chỉ Fluke, nghỉ phép gia đình..."
-                  value={leaveReason}
-                  onChange={(e) => setLeaveReason(e.target.value)}
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-slate-800"
-                />
-              </div>
-
-              <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-200">
-                <button
-                  type="button"
-                  onClick={() => setIsLeaveModalOpen(false)}
-                  className="px-3 py-1.5 text-slate-600 hover:bg-slate-100 rounded-lg"
-                >
-                  Hủy
-                </button>
-                <button
-                  type="submit"
-                  className="px-4 py-1.5 font-semibold bg-[#152A55] text-white rounded-lg hover:bg-[#1E3A75]"
-                >
-                  Lưu lịch bận
-                </button>
-              </div>
-            </form>
+      {/* Hộp thoại dùng chung */}
+      {editAsg && <EditAssignmentModal assignment={editAsg} onClose={() => setEditAsg(null)} onSaved={(m) => { setEditAsg(null); toast.show(m); }} />}
+      {cancelAsg && <CancelAssignmentDialog assignment={cancelAsg} onClose={() => setCancelAsg(null)} onDone={(m) => { setCancelAsg(null); toast.show(m); }} />}
+      {leaveModal && (
+        <LeaveFormModal leave={leaveModal.leave} onClose={() => setLeaveModal(null)}
+          onSaved={(res) => {
+            setLeaveModal(null);
+            const name = staff.find(s => s.id === res.leave.staffId)?.name;
+            if (res.affected.length === 0) toast.show(`Đã ghi nhận lịch nghỉ/bận của ${name}. Không có phân công bị ảnh hưởng.`);
+            else setAfterSave(res);
+          }} />
+      )}
+      {afterSave && (
+        <Modal title="Cảnh báo phân công bị ảnh hưởng" onClose={() => setAfterSave(null)} size="lg"
+          footer={<>
+            <button type="button" className={btnSecondary} onClick={() => { store.deferAffectedAssignments(afterSave.affected.map(a => a.id)); setAfterSave(null); toast.show('Các phân công bị ảnh hưởng được đánh dấu để xử lý sau.'); }}>Để sau</button>
+            <button type="button" className={btnPrimary} onClick={() => { setResolving(afterSave.leave); setAfterSave(null); }}>Xử lý phân công ngay</button>
+          </>}>
+          <div className="p-3 bg-orange-50 border border-orange-200 rounded-xl text-orange-900 font-semibold">
+            Nhân sự {staff.find(s => s.id === afterSave.leave.staffId)?.name} đang có {afterSave.affected.length} phân công trong khoảng nghỉ/bận
           </div>
-        </div>
+          <table className="w-full text-left text-xs">
+            <thead className="text-[10px] uppercase text-slate-500 border-b border-slate-200"><tr><th className="py-1.5">Dự án</th><th>Công việc</th><th>Thời gian</th><th>Phụ trách chính</th></tr></thead>
+            <tbody className="divide-y divide-slate-100">
+              {afterSave.affected.map(a => {
+                const t = tasks.find(x => x.id === a.taskId);
+                return <tr key={a.id}><td className="py-1.5 font-mono">{a.projectCode}</td><td>{t?.code} · {t?.title}</td><td className="font-mono">{formatDateTime(a.startDate)} – {formatDateTime(a.endDate)}</td><td>{staff.find(s => s.id === t?.assigneeId)?.name}</td></tr>;
+              })}
+            </tbody>
+          </table>
+        </Modal>
+      )}
+      {resolving && <ResolveAffectedDrawer leave={resolving} onClose={() => setResolving(null)} onMessage={toast.show} />}
+      {cancelLeave && (
+        <ConfirmDialog title="Hủy lịch nghỉ/bận" danger requireReason reasonLabel="Lý do hủy"
+          message={<>Hủy lịch nghỉ/bận của <strong>{staff.find(s => s.id === cancelLeave.staffId)?.name}</strong> ({formatDateTime(cancelLeave.startDate)} – {formatDateTime(cancelLeave.endDate)})? Các phân công đã hủy trước đó không được tự khôi phục.</>}
+          confirmLabel="Xác nhận hủy lịch"
+          onClose={() => setCancelLeave(null)}
+          onConfirm={(reason) => { const r = store.cancelLeave(cancelLeave.id, reason); if (!r.ok) return r.message; setCancelLeave(null); toast.show(r.message); }} />
       )}
     </div>
   );
 };
+
+/** Hộp thoại Ghi nhận / Sửa lịch nghỉ/bận nhân sự (MH-10, Hình 3.25) */
+const LeaveFormModal: React.FC<{ leave?: StaffLeave; onClose: () => void; onSaved: (r: { leave: StaffLeave; affected: Assignment[] }) => void }> = ({ leave, onClose, onSaved }) => {
+  const { staff, saveLeave } = useStore();
+  const [staffId, setStaffId] = useState(leave?.staffId || '');
+  const [from, setFrom] = useState(leave?.startDate.slice(0, 10) || '');
+  const [to, setTo] = useState(leave?.endDate.slice(0, 10) || '');
+  const [allDay, setAllDay] = useState(!leave || (leave.startDate.slice(11, 16) === '08:00' && leave.endDate.slice(11, 16) === '17:00'));
+  const [sTime, setSTime] = useState(leave?.startDate.slice(11, 16) || '08:00');
+  const [eTime, setETime] = useState(leave?.endDate.slice(11, 16) || '17:00');
+  const [reason, setReason] = useState(leave?.reason || '');
+  const [err, setErr] = useState<string | null>(null);
+  return (
+    <Modal title={leave ? 'Sửa lịch nghỉ/bận nhân sự' : 'Ghi nhận lịch nghỉ/bận nhân sự'} onClose={onClose} size="sm"
+      footer={<>
+        <button type="button" className={btnSecondary} onClick={onClose}>Hủy bỏ</button>
+        <button type="button" className={btnPrimary} onClick={() => {
+          if (!staffId) return setErr('Vui lòng chọn nhân sự.');
+          if (!from || !to) return setErr('Vui lòng nhập thời gian nghỉ/bận.');
+          if (to < from) return setErr('Ngày kết thúc không được trước ngày bắt đầu.');
+          const r = saveLeave({
+            staffId,
+            startDate: toDbDateTime(`${from} ${allDay ? '08:00' : sTime}`),
+            endDate: toDbDateTime(`${to} ${allDay ? '17:00' : eTime}`),
+            reason
+          }, leave?.id);
+          if (!r.ok) return setErr(r.message);
+          onSaved(r.data!);
+        }}>Lưu lịch bận</button>
+      </>}>
+      <p className="text-[10px] text-slate-500">(*) Trường bắt buộc</p>
+      <div>
+        <Label required>Nhân sự</Label>
+        <select value={staffId} disabled={!!leave} onChange={e => setStaffId(e.target.value)} className={inputCls}>
+          <option value="">-- Chọn nhân sự --</option>
+          {staff.filter(s => s.isActive || s.id === staffId).map(s => <option key={s.id} value={s.id}>{s.code} – {s.name} – {s.roleTitleDisplay}</option>)}
+        </select>
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <div><Label required>Từ ngày</Label><input type="date" value={from} onChange={e => setFrom(e.target.value)} className={`${inputCls} font-mono`} /></div>
+        <div><Label required>Đến ngày</Label><input type="date" value={to} onChange={e => setTo(e.target.value)} className={`${inputCls} font-mono`} /></div>
+      </div>
+      <label className="flex items-center gap-2 cursor-pointer"><input type="checkbox" checked={allDay} onChange={e => setAllDay(e.target.checked)} /> Cả ngày (08:00–17:00)</label>
+      {!allDay && (
+        <div className="grid grid-cols-2 gap-3">
+          <div><Label>Giờ bắt đầu</Label><input type="time" value={sTime} onChange={e => setSTime(e.target.value)} className={`${inputCls} font-mono`} /></div>
+          <div><Label>Giờ kết thúc</Label><input type="time" value={eTime} onChange={e => setETime(e.target.value)} className={`${inputCls} font-mono`} /></div>
+        </div>
+      )}
+      <div>
+        <Label required>Lý do nghỉ hoặc bận</Label>
+        <input maxLength={255} value={reason} onChange={e => setReason(e.target.value)} placeholder="Ví dụ: Nghỉ ốm có giấy xác nhận" className={inputCls} />
+      </div>
+      <Hint>Từ ngày không sớm hơn 7 ngày trước ngày hiện tại (ghi nhận bù).</Hint>
+      <ErrorBox message={err} />
+    </Modal>
+  );
+};
+
+/** Ngăn Xử lý phân công bị ảnh hưởng và Bảng chọn nhân sự thay thế (MH-10, Hình 3.26) */
+const ResolveAffectedDrawer: React.FC<{ leave: StaffLeave; onClose: () => void; onMessage: (m: string, t?: 'success' | 'error') => void }> = ({ leave, onClose, onMessage }) => {
+  const store = useStore();
+  const { staff, tasks, assignments, findConflicts, replaceAssignmentStaff } = store;
+  const [handled, setHandled] = useState<string[]>([]);
+  const [editAsg, setEditAsg] = useState<Assignment | null>(null);
+  const [cancelAsg, setCancelAsg] = useState<Assignment | null>(null);
+  const [replaceFor, setReplaceFor] = useState<Assignment | null>(null);
+  const [initialIds] = useState(() => assignments.filter(a => a.staffId === leave.staffId && isRecordActive(a) && overlaps(a.startDate, a.endDate, leave.startDate, leave.endDate)).map(a => a.id));
+  const person = staff.find(s => s.id === leave.staffId);
+  const list = initialIds.map(id => assignments.find(a => a.id === id)!).filter(Boolean);
+  const isStillAffected = (a: Assignment) => isRecordActive(a) && a.staffId === leave.staffId && overlaps(a.startDate, a.endDate, leave.startDate, leave.endDate);
+  const remaining = list.filter(a => isStillAffected(a) && !handled.includes(a.id)).length;
+
+  return (
+    <Drawer title="Xử lý phân công bị ảnh hưởng" subtitle={<>Nhân sự <strong>{person?.name}</strong> · {formatDateTime(leave.startDate)} – {formatDateTime(leave.endDate)} · {leave.reason}</>} onClose={onClose}>
+      <div className={`p-3 rounded-xl border text-[11px] font-semibold ${remaining > 0 ? 'bg-amber-50 border-amber-200 text-amber-900' : 'bg-emerald-50 border-emerald-200 text-emerald-800'}`}>
+        {remaining > 0 ? `Còn ${remaining} phân công chưa xử lý.` : 'Đã xử lý xong các phân công bị ảnh hưởng.'}
+      </div>
+      <div className="space-y-3">
+        {list.map(a => {
+          const t = tasks.find(x => x.id === a.taskId);
+          const done = !isStillAffected(a) || handled.includes(a.id);
+          return (
+            <div key={a.id} className={`p-4 rounded-xl border space-y-2 ${done ? 'bg-emerald-50/40 border-emerald-200' : 'bg-slate-50 border-slate-200'}`}>
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="font-mono text-[10px] font-bold px-1.5 py-0.5 rounded bg-blue-100 text-blue-800">{a.projectCode}</span>
+                <span className="font-mono text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-200 text-slate-800">{t?.code}</span>
+                <span className="font-bold text-slate-900">{t?.title}</span>
+                {done && <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-bold">Đã xử lý</span>}
+              </div>
+              <div className="text-[11px] text-slate-500 font-mono">{formatDateTime(a.startDate)} – {formatDateTime(a.endDate)}</div>
+              {!done && (
+                <div className="flex items-center gap-2 pt-2 border-t border-slate-200 flex-wrap">
+                  <button type="button" onClick={() => setCancelAsg(a)} className="px-2.5 py-1.5 bg-red-50 text-red-700 hover:bg-red-100 border border-red-200 rounded-lg font-semibold cursor-pointer">Hủy phân công</button>
+                  <button type="button" onClick={() => setEditAsg(a)} className="px-2.5 py-1.5 bg-white text-slate-700 hover:bg-slate-100 border border-slate-300 rounded-lg font-semibold cursor-pointer">Đổi thời gian</button>
+                  <button type="button" onClick={() => setReplaceFor(a)} className="px-2.5 py-1.5 bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 rounded-lg font-semibold cursor-pointer">Thay nhân sự</button>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      <button type="button" onClick={onClose} className="w-full py-2 bg-slate-100 hover:bg-slate-200 rounded-xl font-semibold text-slate-700 cursor-pointer">Đóng ngăn xử lý</button>
+
+      {cancelAsg && <CancelAssignmentDialog assignment={cancelAsg} onClose={() => setCancelAsg(null)} onDone={(m) => { setHandled(h => [...h, cancelAsg.id]); setCancelAsg(null); onMessage(m); }} />}
+      {editAsg && <EditAssignmentModal assignment={editAsg} title="Đổi thời gian phân công" onClose={() => setEditAsg(null)} onSaved={(m) => { setEditAsg(null); onMessage(m); }} />}
+      {replaceFor && (
+        <SubstituteModal assignment={replaceFor} onClose={() => setReplaceFor(null)}
+          onPick={(sid) => {
+            const r = replaceAssignmentStaff(replaceFor.id, sid);
+            if (!r.ok) return r.message;
+            setHandled(h => [...h, replaceFor.id]);
+            setReplaceFor(null);
+            onMessage(r.message);
+          }} />
+      )}
+    </Drawer>
+  );
+};
+
+/** Bảng chọn nhân sự thay thế (MH-10, Hình 3.26 bảng 3) */
+function SubstituteModal({ assignment, onClose: close, onPick }: { assignment: Assignment; onClose: () => void; onPick: (staffId: string) => string | void }) {
+  const { staff, tasks, assignments, findConflicts } = useStore();
+  const [q, setQ] = useState('');
+  const [spec, setSpec] = useState('');
+  const [picked, setPicked] = useState<Staff | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const t = tasks.find(x => x.id === assignment.taskId);
+  const candidates = staff.filter(s => s.isActive && s.id !== assignment.staffId && findConflicts(s.id, assignment.startDate, assignment.endDate, assignment.id).length === 0)
+    .filter(s => (!q || s.name.toLowerCase().includes(q.toLowerCase())) && (!spec || s.specialty === spec));
+  const specs = Array.from(new Set(staff.map(s => s.specialty).filter(Boolean)));
+  return (
+    <Modal title="Chọn nhân sự thay thế" subtitle={`${t?.code} · ${formatDateTime(assignment.startDate)} – ${formatDateTime(assignment.endDate)}`} onClose={close}
+      footer={picked ? <>
+        <button type="button" className={btnSecondary} onClick={() => setPicked(null)}>Hủy bỏ</button>
+        <button type="button" className={btnPrimary} onClick={() => { const r = onPick(picked.id); if (typeof r === 'string') setErr(r); }}>Xác nhận</button>
+      </> : undefined}>
+      {picked ? (
+        <div className="p-3 bg-blue-50 border border-blue-200 rounded-xl text-blue-900">
+          Thay <strong>{assignment.staffName}</strong> bằng <strong>{picked.name}</strong> cho {t?.code} · {t?.title} từ {formatDateTime(assignment.startDate)} đến {formatDateTime(assignment.endDate)}?
+        </div>
+      ) : (
+        <>
+          <div className="flex gap-2">
+            <input value={q} onChange={e => setQ(e.target.value)} placeholder="Tìm theo tên" className={inputCls} />
+            <select value={spec} onChange={e => setSpec(e.target.value)} className={inputCls}>
+              <option value="">Mọi chuyên môn</option>
+              {specs.map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </div>
+          <div className="space-y-2 max-h-72 overflow-y-auto">
+            {candidates.length === 0 ? <div className="text-slate-500 text-center p-4">Không có nhân sự nào rảnh trong khoảng này. Hãy đổi thời gian hoặc hủy phân công.</div> :
+              candidates.map(c => (
+                <div key={c.id} className="p-3 rounded-xl border border-slate-200 flex items-center justify-between gap-3 hover:border-blue-500">
+                  <div>
+                    <div className="font-bold text-slate-900">{c.name}</div>
+                    <div className="text-[11px] text-slate-500">{c.roleTitleDisplay} · {c.specialty || 'Chưa cập nhật chuyên môn'}</div>
+                    <div className="text-[10px] text-slate-400">{assignments.filter(a => a.staffId === c.id && isRecordActive(a) && toTime(a.endDate) > toTime(DEMO_QUERY_TIME)).length} việc</div>
+                  </div>
+                  <button type="button" onClick={() => setPicked(c)} className="px-3 py-1.5 bg-blue-700 hover:bg-blue-800 text-white rounded-lg font-bold cursor-pointer">Chọn</button>
+                </div>
+              ))}
+          </div>
+        </>
+      )}
+      <ErrorBox message={err} />
+    </Modal>
+  );
+}

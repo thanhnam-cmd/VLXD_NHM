@@ -6,7 +6,13 @@ import {
   StaffLeave,
   WorkLog,
   TechDoc,
-  UserAccount
+  UserAccount,
+  Category,
+  Customer,
+  ExternalSubcontractor,
+  ExternalAssignment,
+  AuditLog,
+  SystemConfig
 } from '../types/index.ts';
 import {
   INITIAL_PROJECTS,
@@ -16,7 +22,13 @@ import {
   INITIAL_LEAVES,
   INITIAL_WORK_LOGS,
   INITIAL_DOCS,
-  INITIAL_ACCOUNTS
+  INITIAL_ACCOUNTS,
+  INITIAL_CATEGORIES,
+  INITIAL_CUSTOMERS,
+  INITIAL_SUBCONTRACTORS,
+  INITIAL_EXTERNAL_ASSIGNMENTS,
+  INITIAL_AUDIT_LOGS,
+  SYSTEM_CONFIG
 } from '../data/mockData.ts';
 
 const STORAGE_KEYS = {
@@ -27,7 +39,13 @@ const STORAGE_KEYS = {
   LEAVES: 'nmh_db_leaves',
   WORK_LOGS: 'nmh_db_worklogs',
   DOCS: 'nmh_db_docs',
-  ACCOUNTS: 'nmh_db_accounts'
+  ACCOUNTS: 'nmh_db_accounts',
+  CATEGORIES: 'nmh_db_categories',
+  CUSTOMERS: 'nmh_db_customers',
+  SUBCONTRACTORS: 'nmh_db_subcontractors',
+  EXTERNAL_ASSIGNMENTS: 'nmh_db_external_assignments',
+  AUDIT_LOGS: 'nmh_db_audit_logs',
+  CONFIG: 'nmh_db_config'
 };
 
 function loadFromStorage<T>(key: string, fallback: T): T {
@@ -308,8 +326,27 @@ export const dbService = {
   getAccounts: (): UserAccount[] => loadFromStorage<UserAccount[]>(STORAGE_KEYS.ACCOUNTS, INITIAL_ACCOUNTS),
   saveAccounts: (data: UserAccount[]) => saveToStorage(STORAGE_KEYS.ACCOUNTS, data),
 
+  getCategories: (): Category[] => loadFromStorage<Category[]>(STORAGE_KEYS.CATEGORIES, INITIAL_CATEGORIES),
+  saveCategories: (data: Category[]) => saveToStorage(STORAGE_KEYS.CATEGORIES, data),
+
+  getCustomers: (): Customer[] => loadFromStorage<Customer[]>(STORAGE_KEYS.CUSTOMERS, INITIAL_CUSTOMERS),
+  saveCustomers: (data: Customer[]) => saveToStorage(STORAGE_KEYS.CUSTOMERS, data),
+
+  getSubcontractors: (): ExternalSubcontractor[] => loadFromStorage<ExternalSubcontractor[]>(STORAGE_KEYS.SUBCONTRACTORS, INITIAL_SUBCONTRACTORS),
+  saveSubcontractors: (data: ExternalSubcontractor[]) => saveToStorage(STORAGE_KEYS.SUBCONTRACTORS, data),
+
+  getExternalAssignments: (): ExternalAssignment[] => loadFromStorage<ExternalAssignment[]>(STORAGE_KEYS.EXTERNAL_ASSIGNMENTS, INITIAL_EXTERNAL_ASSIGNMENTS),
+  saveExternalAssignments: (data: ExternalAssignment[]) => saveToStorage(STORAGE_KEYS.EXTERNAL_ASSIGNMENTS, data),
+
+  getAuditLogs: (): AuditLog[] => loadFromStorage<AuditLog[]>(STORAGE_KEYS.AUDIT_LOGS, INITIAL_AUDIT_LOGS),
+  saveAuditLogs: (data: AuditLog[]) => saveToStorage(STORAGE_KEYS.AUDIT_LOGS, data),
+
+  getConfig: (): SystemConfig => ({ ...SYSTEM_CONFIG, ...loadFromStorage<Partial<SystemConfig>>(STORAGE_KEYS.CONFIG, {}) }),
+  saveConfig: (data: SystemConfig) => saveToStorage(STORAGE_KEYS.CONFIG, data),
+
   // Reset entire database to pristine seed data
   resetToDefault: () => {
+    Object.values(STORAGE_KEYS).forEach(k => localStorage.removeItem(k));
     localStorage.removeItem(STORAGE_KEYS.PROJECTS);
     localStorage.removeItem(STORAGE_KEYS.TASKS);
     localStorage.removeItem(STORAGE_KEYS.STAFF);

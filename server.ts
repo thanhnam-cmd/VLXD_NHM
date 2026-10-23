@@ -8,10 +8,9 @@ import pg from 'pg';
 dotenv.config();
 
 const app = express();
-const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
+const isProd = process.env.NODE_ENV === 'production';
+const PORT = !isProd ? 3000 : (process.env.PORT ? parseInt(process.env.PORT, 10) : 3000);
 const distPath = path.resolve(process.cwd(), 'dist');
-const hasDist = fs.existsSync(path.resolve(distPath, 'index.html'));
-const isProd = process.env.NODE_ENV === 'production' || hasDist;
 
 app.use(express.json());
 
@@ -652,7 +651,7 @@ async function startServer() {
   if (!isProd) {
     // Development mode: mount Vite dev middleware
     const vite = await createViteServer({
-      server: { middlewareMode: true, allowedHosts: true },
+      server: { middlewareMode: true, hmr: false },
       appType: 'spa'
     });
     app.use(vite.middlewares);

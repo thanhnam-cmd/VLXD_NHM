@@ -1,927 +1,743 @@
-import React, { useState, useEffect } from 'react';
-import { UserAccount, UserRole, Staff, Project } from '../types/index.ts';
-import { 
-  ShieldCheck, 
-  KeyRound, 
-  Lock, 
-  Unlock, 
-  Plus, 
-  UserPlus, 
-  CheckCircle2, 
-  AlertCircle,
-  Table,
-  FolderKanban,
-  Settings,
-  History,
-  ArrowRight,
-  ArrowLeft,
-  ChevronDown,
-  ChevronUp,
-  AlertTriangle,
-  Clock,
-  Copy,
-  Check
-} from 'lucide-react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { UserAccount, UserRole, SystemConfig, AuditLog } from '../types/index.ts';
+import { useStore } from '../state/store.tsx';
+import { dbService } from '../services/db.ts';
 import { DEMO_QUERY_TIME } from '../utils/progressCalculator.ts';
+import { ShieldCheck, KeyRound, Lock, Unlock, UserPlus, Table, FolderKanban, Settings, History, ChevronDown, ChevronUp, AlertTriangle, Copy, Check, Pencil, Search } from 'lucide-react';
+import { useToast, Modal, Drawer, Label, Hint, ErrorBox, inputCls, btnPrimary, btnSecondary, ConfirmDialog, Pagination, StatusBadge } from '../components/ui.tsx';
+import { ROLE_LABEL, normalizeRole, formatDateTime, toDbDateTime } from '../utils/domain.ts';
+import { PERMISSION_MATRIX, ROLE_SCOPE, ROLE_DESCRIPTION, AUDIT_ACTION_LABEL, RoleKey, PermLabel } from '../utils/permissions.ts';
+import { FILE_TYPE_LABEL } from '../components/DocDialogs.tsx';
 
-interface AdminViewProps {
-  accounts: UserAccount[];
-  staff: Staff[];
-  projects: Project[];
-  currentUser: UserAccount;
-  initialTab?: 'accounts' | 'scope' | 'config' | 'audit' | 'matrix';
-  onUpdateRole: (userId: string, newRole: UserRole) => void;
-  onToggleAccountLock: (userId: string, reason?: string) => void;
-  onResetPassword: (userId: string) => void;
-  onCreateAccount: (account: Omit<UserAccount, 'id'>) => void;
-  onUpdateAccountScope: (userId: string, projectIds: string[]) => void;
-}
+type AdminTab = 'accounts' | 'matrix' | 'scope' | 'config' | 'audit';
 
-export const AdminView: React.FC<AdminViewProps> = ({
-  accounts,
-  staff,
-  projects,
-  currentUser,
-  initialTab = 'accounts',
-  onUpdateRole,
-  onToggleAccountLock,
-  onResetPassword,
-  onCreateAccount,
-  onUpdateAccountScope
-}) => {
-  const [activeTab, setActiveTab] = useState<'accounts' | 'scope' | 'config' | 'audit' | 'matrix'>(initialTab);
-  const [toast, setToast] = useState<string | null>(null);
+const ROLES: RoleKey[] = ['QUAN_TRI', 'QUAN_LY', 'BAN_GIAM_DOC', 'DOI_TRUONG'];
 
-  useEffect(() => {
-    setActiveTab(initialTab);
-  }, [initialTab]);
+const genPassword = () => {
+  const up = 'ABCDEFGHJKMNPQRSTUVWXYZ', low = 'abcdefghjkmnpqrstuvwxyz', dig = '23456789';
+  const pick = (s: string) => s.charAt(Math.floor(Math.random() * s.length));
+  let p = pick(up) + pick(low) + pick(dig);
+  for (let i = 0; i < 7; i++) p += pick(up + low + dig);
+  return p.split('').sort(() => Math.random() - 0.5).join('');
+};
 
-  // New account form modal (AD-02)
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [newUsername, setNewUsername] = useState('');
-  const [newName, setNewName] = useState('');
-  const [newEmail, setNewEmail] = useState('');
-  const [newRole, setNewRole] = useState<UserRole>('QUAN_LY');
-  const [newStaffId, setNewStaffId] = useState('');
+/** Hiển thị mật khẩu tạm một lần kèm nút Sao chép */
+const TempPasswordModal: React.FC<{ name: string; password: string; onClose: () => void }> = ({ name, password, onClose }) => {
+  const [copied, setCopied] = useState(false);
+  return (
+    <Modal title="Mật khẩu tạm" subtitle={name} onClose={onClose} size="sm" footer={<button type="button" className={btnPrimary} onClick={onClose}>Đã lưu, đóng</button>}>
+      <p className="text-slate-600">Mật khẩu tạm chỉ hiển thị một lần. Hãy chuyển riêng cho người dùng và nhắc đổi mật khẩu ở lần đăng nhập sau.</p>
+      <div className="flex items-center gap-2">
+        <code className="flex-1 px-3 py-2 bg-slate-100 rounded-lg font-mono text-sm font-bold text-slate-900">{password}</code>
+        <button type="button" onClick={() => { navigator.clipboard?.writeText(password); setCopied(true); }} className="px-3 py-2 rounded-lg border border-slate-300 font-semibold flex items-center gap-1 cursor-pointer">
+          {copied ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />} Sao chép
+        </button>
+      </div>
+    </Modal>
+  );
+};
 
-  // Lock account modal (AD-03)
-  const [lockModalAcc, setLockModalAcc] = useState<UserAccount | null>(null);
-  const [lockReason, setLockReason] = useState('Nghỉ việc; khóa theo quy trình bàn giao');
+/** Biểu mẫu Cấp tài khoản mới / Sửa tài khoản (MH-04, Hình 3.9) */
+const AccountFormModal: React.FC<{ account?: UserAccount; onClose: () => void; onSaved: (msg: string, tempPass?: { name: string; password: string }) => void }> = ({ account, onClose, onSaved }) => {
+  const { accounts, staff, projects, currentUser, createAccount, updateAccount } = useStore();
+  const isEdit = !!account;
+  const [username, setUsername] = useState(account?.username || '');
+  const [name, setName] = useState(account?.name || '');
+  const [role, setRole] = useState<UserRole | ''>(account ? normalizeRole(account.role) : '');
+  const [staffId, setStaffId] = useState(account?.staffId || '');
+  const [staffQuery, setStaffQuery] = useState('');
+  const [projectIds, setProjectIds] = useState<string[]>(account?.assignedProjectIds || []);
+  const [password, setPassword] = useState('');
+  const [confirm, setConfirm] = useState('');
+  const [err, setErr] = useState<string | null>(null);
+  const [roleConfirm, setRoleConfirm] = useState(false);
 
-  // Scope state (AD-04)
-  const managerAccounts = accounts.filter(a => a.role === 'QUAN_LY' || a.role === 'manager');
-  const [selectedManagerId, setSelectedManagerId] = useState<string>(managerAccounts[0]?.id || '2');
+  const staffOptions = staff.filter(s => s.isActive && (!accounts.some(a => a.staffId === s.id) || s.id === account?.staffId))
+    .filter(s => !staffQuery || `${s.code} ${s.name}`.toLowerCase().includes(staffQuery.toLowerCase()));
 
-  // System config state (AD-05)
-  const [configQueryTime, setConfigQueryTime] = useState(DEMO_QUERY_TIME);
-  const [configUpcomingDays, setConfigUpcomingDays] = useState(7);
-  const [configSessionTimeout, setConfigSessionTimeout] = useState(30);
-  const [configMaxUploadMB, setConfigMaxUploadMB] = useState(50);
-  const [configAllowedFiles, setConfigAllowedFiles] = useState(['Bản vẽ CAD', 'PDF', 'Ảnh hiện trường', 'Bảng tính', 'Bộ hồ sơ nén']);
-  const [configBackupDays, setConfigBackupDays] = useState(7);
-
-  // Audit log mock state (AD-06)
-  const [auditLogs, setAuditLogs] = useState([
-    {
-      id: 1,
-      time: '2026-10-11 15:30:00',
-      user: 'qly.bao',
-      action: 'TAO_MOI',
-      actionLabel: 'Tạo mới',
-      target: 'Phân công #92',
-      reason: 'Phân công thi công đợt 2',
-      oldVal: null,
-      newVal: { staff: 'Cao Văn Bình', task: 'CV42', dates: '21/10/2026 - 24/10/2026' }
-    },
-    {
-      id: 2,
-      time: '2026-10-10 17:00:00',
-      user: 'dt.tuan',
-      action: 'TAI_LEN',
-      actionLabel: 'Tải tệp lên',
-      target: 'Tệp minh chứng #37',
-      reason: 'Cập nhật tiến độ lắp camera phòng họp',
-      oldVal: null,
-      newVal: { file: 'cv40-034.jpg', size: '2.4 MB', sha256: '0ba38dae' }
-    },
-    {
-      id: 3,
-      time: '2026-10-09 16:00:00',
-      user: 'qly.nhung',
-      action: 'DOI_TRANG_THAI',
-      actionLabel: 'Đổi trạng thái',
-      target: 'Dự án NMH-2026-006',
-      reason: 'Khách hàng tạm dừng mặt bằng thi công',
-      oldVal: { status: 'DANG_THUC_HIEN' },
-      newVal: { status: 'TAM_DUNG' }
-    },
-    {
-      id: 4,
-      time: '2026-08-28 09:00:00',
-      user: 'admin',
-      action: 'KHOA',
-      actionLabel: 'Khóa tài khoản',
-      target: 'Tài khoản qly.trung',
-      reason: 'Nghỉ việc; khóa theo quy trình bàn giao',
-      oldVal: { status: 'HOAT_DONG' },
-      newVal: { status: 'BI_KHOA', lockReason: 'Nghỉ việc; khóa theo quy trình bàn giao' }
-    }
-  ]);
-  const [expandedLogId, setExpandedLogId] = useState<number | null>(null);
-
-  // Selected manager for AD-04
-  const currentManager = managerAccounts.find(m => m.id === selectedManagerId) || managerAccounts[0];
-  const assignedIds = currentManager?.assignedProjectIds || [];
-  const assignedProjects = projects.filter(p => assignedIds.includes(p.id));
-  const unassignedProjects = projects.filter(p => !assignedIds.includes(p.id));
-
-  const showToast = (msg: string) => {
-    setToast(msg);
-    setTimeout(() => setToast(null), 3000);
-  };
-
-  const handleGrantProject = (projectId: string) => {
-    if (!currentManager) return;
-    const nextIds = [...assignedIds, projectId];
-    onUpdateAccountScope(currentManager.id, nextIds);
-    showToast(`Đã cấp dự án cho ${currentManager.name}`);
-  };
-
-  const handleRevokeProject = (projectId: string) => {
-    if (!currentManager) return;
-    const nextIds = assignedIds.filter(id => id !== projectId);
-    onUpdateAccountScope(currentManager.id, nextIds);
-    showToast(`Đã thu hồi dự án khỏi ${currentManager.name}`);
-  };
-
-  const handleGrantAll = () => {
-    if (!currentManager) return;
-    const allIds = projects.map(p => p.id);
-    onUpdateAccountScope(currentManager.id, allIds);
-    showToast(`Đã cấp toàn bộ ${projects.length} dự án cho ${currentManager.name}`);
-  };
-
-  const handleConfirmLock = () => {
-    if (!lockModalAcc) return;
-    if (lockModalAcc.isActive && lockReason.trim().length < 5) {
-      showToast('Lý do khóa phải có ít nhất 5 ký tự!');
+  const doSave = () => {
+    if (isEdit) {
+      const r = updateAccount(account!.id, { name, role: role as UserRole, staffId: staffId || undefined, projectIds });
+      if (!r.ok) return setErr(r.message);
+      onSaved(r.message);
       return;
     }
-    onToggleAccountLock(lockModalAcc.id, lockReason);
-    setLockModalAcc(null);
-    showToast(lockModalAcc.isActive ? `Đã khóa tài khoản ${lockModalAcc.name}` : `Đã mở khóa tài khoản ${lockModalAcc.name}`);
+    if (password !== confirm) return setErr('Mật khẩu xác nhận không trùng khớp.');
+    const r = createAccount({ username, name, role: role as UserRole, staffId: staffId || undefined, projectIds, password });
+    if (!r.ok) return setErr(r.message);
+    onSaved(r.message, { name: r.data!.name, password });
   };
 
-  const handleCreateAccountSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newUsername.trim() || !newName.trim()) return;
-
-    onCreateAccount({
-      username: newUsername.trim(),
-      name: newName.trim(),
-      email: newEmail.trim() || `${newUsername.trim()}@nmh.vn`,
-      role: newRole,
-      staffId: newStaffId || undefined,
-      isActive: true,
-      assignedProjectIds: []
-    });
-
-    setIsModalOpen(false);
-    setNewUsername('');
-    setNewName('');
-    setNewEmail('');
-    showToast('Tạo tài khoản mới thành công!');
+  const submit = () => {
+    setErr(null);
+    if (!role) return setErr('Vui lòng chọn vai trò.');
+    if (isEdit && role !== normalizeRole(account!.role)) {
+      if (account!.id === currentUser.id) return setErr('Không thể thay đổi quyền hoặc khóa tài khoản của chính bạn.');
+      setRoleConfirm(true);
+      return;
+    }
+    doSave();
   };
 
   return (
-    <div className="space-y-6">
-      {/* Toast Alert */}
-      {toast && (
-        <div className="fixed top-16 right-6 z-50 p-3 bg-slate-900 text-white rounded-xl text-xs flex items-center gap-2 shadow-2xl animate-in slide-in-from-top-2">
-          <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-          <span>{toast}</span>
+    <>
+      <Modal title={isEdit ? 'Sửa tài khoản' : 'Cấp tài khoản mới'} onClose={onClose} size="lg"
+        footer={<>
+          <button type="button" className={btnSecondary} onClick={onClose}>Hủy bỏ</button>
+          <button type="button" className={btnPrimary} onClick={submit}>{isEdit ? 'Lưu thay đổi' : 'Lưu tài khoản'}</button>
+        </>}>
+        <p className="text-[10px] text-slate-500">(*) Trường bắt buộc</p>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <Label required>Tên đăng nhập</Label>
+            <input value={username} disabled={isEdit} maxLength={50} onChange={e => setUsername(e.target.value.toLowerCase())} placeholder="Ví dụ: qly.hung" className={`${inputCls} font-mono`} />
+            <Hint>Tối đa 50 ký tự, chữ thường không dấu{isEdit ? '; không đổi khi sửa' : ''}</Hint>
+          </div>
+          <div>
+            <Label required>Họ tên hiển thị</Label>
+            <input value={name} maxLength={120} onChange={e => setName(e.target.value)} placeholder="Ví dụ: Nguyễn Văn Hùng" className={inputCls} />
+            <Hint>Tối đa 120 ký tự</Hint>
+          </div>
+          <div>
+            <Label required>Vai trò</Label>
+            <select value={role} onChange={e => setRole(e.target.value as UserRole)} className={inputCls}>
+              <option value="">-- Chọn vai trò --</option>
+              {ROLES.map(r => <option key={r} value={r}>{ROLE_LABEL[r]}</option>)}
+            </select>
+            {role && <Hint>{ROLE_DESCRIPTION[role as RoleKey]}</Hint>}
+          </div>
+          <div>
+            <Label required={role === 'DOI_TRUONG'}>Nhân sự liên kết</Label>
+            <div className="flex gap-1.5">
+              <input value={staffQuery} onChange={e => setStaffQuery(e.target.value)} placeholder="Tìm..." className={`${inputCls} w-24`} />
+              <select value={staffId} onChange={e => {
+                setStaffId(e.target.value);
+                const s = staff.find(x => x.id === e.target.value);
+                if (s && !name.trim()) setName(s.name);
+              }} className={inputCls}>
+                <option value="">-- Tìm và chọn nhân sự --</option>
+                {staffOptions.map(s => <option key={s.id} value={s.id}>{s.code} – {s.name}</option>)}
+              </select>
+            </div>
+            <Hint>Bắt buộc với Đội trưởng; nên liên kết với Quản lý. Chỉ nhân sự đang làm việc, chưa có tài khoản.</Hint>
+          </div>
         </div>
+        {role === 'QUAN_LY' && (
+          <div>
+            <Label>Phạm vi dự án (chỉ với vai trò Quản lý)</Label>
+            <div className="max-h-32 overflow-y-auto border border-slate-200 rounded-lg p-2 grid grid-cols-2 gap-1">
+              {projects.map(p => (
+                <label key={p.id} className="flex items-center gap-1.5 cursor-pointer">
+                  <input type="checkbox" checked={projectIds.includes(p.id)} onChange={e => setProjectIds(e.target.checked ? [...projectIds, p.id] : projectIds.filter(x => x !== p.id))} />
+                  <span className="font-mono">{p.code}</span>
+                </label>
+              ))}
+            </div>
+            <Hint>Có thể để trống và cấp sau ở mục Phạm vi dự án.</Hint>
+          </div>
+        )}
+        {!isEdit && (
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label required>Mật khẩu tạm</Label>
+              <input type="password" value={password} onChange={e => setPassword(e.target.value)} className={`${inputCls} font-mono`} />
+              <button type="button" onClick={() => { const p = genPassword(); setPassword(p); setConfirm(p); }} className="mt-1.5 px-2.5 py-1 rounded-lg border border-blue-300 text-blue-700 text-[11px] font-semibold hover:bg-blue-50 cursor-pointer">Tạo ngẫu nhiên</button>
+              <Hint>Tối thiểu 8 ký tự gồm chữ hoa, chữ thường và chữ số</Hint>
+            </div>
+            <div>
+              <Label required>Xác nhận mật khẩu</Label>
+              <input type="password" value={confirm} onChange={e => setConfirm(e.target.value)} className={`${inputCls} font-mono`} />
+            </div>
+          </div>
+        )}
+        <ErrorBox message={err} />
+      </Modal>
+      {roleConfirm && (
+        <ConfirmDialog
+          title="Xác nhận đổi vai trò"
+          message={`Đổi vai trò của ${account!.name} từ ${ROLE_LABEL[normalizeRole(account!.role)]} sang ${ROLE_LABEL[role as string]}? Quyền mới có hiệu lực từ yêu cầu tiếp theo của tài khoản.`}
+          onClose={() => setRoleConfirm(false)}
+          onConfirm={() => { setRoleConfirm(false); doSave(); }}
+        />
       )}
+    </>
+  );
+};
 
-      {/* Header */}
+/** Đổi mật khẩu của chính mình (MH-22) */
+const ChangeOwnPasswordModal: React.FC<{ onClose: () => void; onDone: (m: string) => void }> = ({ onClose, onDone }) => {
+  const [cur, setCur] = useState('');
+  const [next, setNext] = useState('');
+  const [confirm, setConfirm] = useState('');
+  const [err, setErr] = useState<string | null>(null);
+  return (
+    <Modal title="Đổi mật khẩu" onClose={onClose} size="sm"
+      footer={<>
+        <button type="button" className={btnSecondary} onClick={onClose}>Hủy bỏ</button>
+        <button type="button" className={btnPrimary} onClick={async () => {
+          if (!cur) return setErr('Vui lòng nhập mật khẩu hiện tại.');
+          if (!/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).{8,}$/.test(next)) return setErr('Mật khẩu cần tối thiểu 8 ký tự, gồm chữ hoa, chữ thường và chữ số.');
+          if (next !== confirm) return setErr('Mật khẩu xác nhận không trùng khớp.');
+          const r = await dbService.changePassword(cur, next);
+          if (!r.success) return setErr(r.message);
+          onDone('Đã đổi mật khẩu.');
+        }}>Lưu mật khẩu</button>
+      </>}>
+      <div><Label required>Mật khẩu hiện tại</Label><input type="password" value={cur} onChange={e => setCur(e.target.value)} className={inputCls} /></div>
+      <div><Label required>Mật khẩu mới</Label><input type="password" value={next} onChange={e => setNext(e.target.value)} className={inputCls} /></div>
+      <div><Label required>Xác nhận mật khẩu mới</Label><input type="password" value={confirm} onChange={e => setConfirm(e.target.value)} className={inputCls} /></div>
+      <ErrorBox message={err} />
+    </Modal>
+  );
+};
+
+const ResetPasswordModal: React.FC<{ account: UserAccount; onClose: () => void; onDone: (m: string, pass: string) => void }> = ({ account, onClose, onDone }) => {
+  const { resetPassword } = useStore();
+  const [pass, setPass] = useState('');
+  const [err, setErr] = useState<string | null>(null);
+  return (
+    <Modal title="Đặt lại mật khẩu" subtitle={`${account.name} (${account.username})`} onClose={onClose} size="sm"
+      footer={<>
+        <button type="button" className={btnSecondary} onClick={onClose}>Hủy bỏ</button>
+        <button type="button" className={btnPrimary} onClick={() => { const r = resetPassword(account.id, pass); if (!r.ok) return setErr(r.message); onDone(r.message, pass); }}>Xác nhận</button>
+      </>}>
+      <div>
+        <Label required>Mật khẩu tạm</Label>
+        <div className="flex gap-2">
+          <input value={pass} onChange={e => setPass(e.target.value)} className={`${inputCls} font-mono`} />
+          <button type="button" onClick={() => setPass(genPassword())} className="px-3 rounded-lg border border-blue-300 text-blue-700 font-semibold whitespace-nowrap cursor-pointer">Tạo ngẫu nhiên</button>
+        </div>
+        <Hint>Sau khi xác nhận, các phiên đang đăng nhập của tài khoản bị thu hồi; người dùng được nhắc đổi mật khẩu ở lần đăng nhập sau.</Hint>
+      </div>
+      <ErrorBox message={err} />
+    </Modal>
+  );
+};
+
+/** Ngăn cấp Phạm vi dự án của một tài khoản Quản lý (MH-19, Hình 3.12) */
+const ScopeDrawer: React.FC<{ account: UserAccount; onClose: () => void; onSaved: (m: string) => void }> = ({ account, onClose, onSaved }) => {
+  const { projects, updateAccountScope } = useStore();
+  const [granted, setGranted] = useState<string[]>(account.assignedProjectIds || []);
+  const [leftSel, setLeftSel] = useState<string[]>([]);
+  const [rightSel, setRightSel] = useState<string[]>([]);
+  const [qLeft, setQLeft] = useState('');
+  const [qRight, setQRight] = useState('');
+  const [confirmRemove, setConfirmRemove] = useState(false);
+  const match = (q: string) => (p: { code: string; name: string }) => !q || `${p.code} ${p.name}`.toLowerCase().includes(q.toLowerCase());
+  const left = projects.filter(p => !granted.includes(p.id)).filter(match(qLeft));
+  const right = projects.filter(p => granted.includes(p.id)).filter(match(qRight));
+  const Row = ({ p, sel, setSel, showGrant }: { p: typeof projects[number]; sel: string[]; setSel: (v: string[]) => void; showGrant?: boolean }) => (
+    <label className="flex items-start gap-2 p-2 rounded-lg border border-slate-200 bg-white cursor-pointer">
+      <input type="checkbox" className="mt-0.5" checked={sel.includes(p.id)} onChange={e => setSel(e.target.checked ? [...sel, p.id] : sel.filter(x => x !== p.id))} />
+      <div className="min-w-0">
+        <div className="flex items-center gap-1.5"><span className="font-mono font-bold text-[11px]">{p.code}</span><StatusBadge status={p.status} /></div>
+        <div className="text-[11px] text-slate-700 truncate">{p.name}</div>
+        {showGrant && account.scopeGrants?.[p.id] && (
+          <div className="text-[10px] text-slate-500">Cấp bởi {account.scopeGrants[p.id].grantedBy} lúc {formatDateTime(account.scopeGrants[p.id].grantedAt)}</div>
+        )}
+      </div>
+    </label>
+  );
+  return (
+    <Drawer title={`Phạm vi dự án của ${account.name}`} subtitle={account.username} onClose={onClose} width="max-w-4xl">
+      <div className="grid grid-cols-[1fr_auto_1fr] gap-3 items-start">
+        <div className="border border-slate-200 rounded-xl bg-slate-50/50 p-2 space-y-2">
+          <div className="font-bold text-slate-700 px-1">Dự án chưa cấp ({left.length})</div>
+          <input value={qLeft} onChange={e => setQLeft(e.target.value)} placeholder="Tìm theo mã hoặc tên dự án" className={inputCls} />
+          <div className="space-y-1.5 max-h-96 overflow-y-auto">{left.map(p => <Row key={p.id} p={p} sel={leftSel} setSel={setLeftSel} />)}</div>
+        </div>
+        <div className="flex flex-col gap-2 pt-16">
+          <button type="button" title="Cấp các dự án đã tick" onClick={() => { setGranted([...granted, ...leftSel]); setLeftSel([]); }} className="px-3 py-1.5 rounded-lg border border-slate-300 bg-white font-bold cursor-pointer">›</button>
+          <button type="button" title="Gỡ các dự án đã tick" onClick={() => rightSel.length && setConfirmRemove(true)} className="px-3 py-1.5 rounded-lg border border-slate-300 bg-white font-bold cursor-pointer">‹</button>
+          <button type="button" title="Cấp tất cả dự án đang hiển thị" onClick={() => setGranted(Array.from(new Set([...granted, ...left.map(p => p.id)])))} className="px-3 py-1.5 rounded-lg border border-slate-300 bg-white font-bold cursor-pointer">»</button>
+        </div>
+        <div className="border border-blue-200 rounded-xl bg-blue-50/30 p-2 space-y-2">
+          <div className="font-bold text-blue-900 px-1">Dự án đã cấp ({right.length})</div>
+          <input value={qRight} onChange={e => setQRight(e.target.value)} placeholder="Tìm theo mã hoặc tên dự án" className={inputCls} />
+          <div className="space-y-1.5 max-h-96 overflow-y-auto">{right.map(p => <Row key={p.id} p={p} sel={rightSel} setSel={setRightSel} showGrant />)}</div>
+        </div>
+      </div>
+      <div className="flex justify-end gap-2 pt-3 border-t border-slate-200">
+        <button type="button" className={btnSecondary} onClick={onClose}>Hủy bỏ</button>
+        <button type="button" className={btnPrimary} onClick={() => { const r = updateAccountScope(account.id, granted); onSaved(r.message); }}>Lưu phạm vi</button>
+      </div>
+      {confirmRemove && (
+        <Modal title="Gỡ dự án khỏi phạm vi" onClose={() => setConfirmRemove(false)} size="sm"
+          footer={<>
+            <button type="button" className={btnSecondary} onClick={() => setConfirmRemove(false)}>Hủy bỏ</button>
+            <button type="button" className={btnPrimary} onClick={() => { setGranted(granted.filter(id => !rightSel.includes(id))); setRightSel([]); setConfirmRemove(false); }}>Xác nhận gỡ</button>
+          </>}>
+          <div className="p-3 bg-orange-50 border border-orange-200 rounded-xl text-orange-900">
+            Quản lý này sẽ không còn thấy dự án này và các phân công liên quan. Dữ liệu của dự án không bị thay đổi.
+          </div>
+        </Modal>
+      )}
+    </Drawer>
+  );
+};
+
+/** Hiển thị JSON Trước/Sau, tô vàng trường thay đổi (MH-21 thành phần 7) */
+const JsonBlock: React.FC<{ title: string; value: any; compare?: any }> = ({ title, value, compare }) => {
+  if (value === null || value === undefined) return null;
+  const entries = typeof value === 'object' ? Object.entries(value) : [['gia_tri', value]];
+  return (
+    <div className="flex-1 min-w-0">
+      <div className="font-bold text-slate-600 mb-1">{title}</div>
+      <pre className="p-2 bg-white rounded border border-slate-200 overflow-x-auto text-[11px] leading-relaxed">
+        {'{\n'}
+        {entries.map(([k, v], i) => {
+          const changed = compare && typeof compare === 'object' && JSON.stringify(compare[k]) !== JSON.stringify(v);
+          return <span key={k} className={changed ? 'bg-yellow-100' : ''}>{`  "${k}": ${JSON.stringify(v)}${i < entries.length - 1 ? ',' : ''}\n`}</span>;
+        })}
+        {'}'}
+      </pre>
+    </div>
+  );
+};
+
+interface AdminViewProps {
+  initialTab?: AdminTab;
+}
+
+export const AdminView: React.FC<AdminViewProps> = ({ initialTab = 'accounts' }) => {
+  const store = useStore();
+  const { accounts, staff, currentUser, config, auditLogs, setAccountLock } = store;
+  const toast = useToast();
+  const [activeTab, setActiveTab] = useState<AdminTab>(initialTab);
+  useEffect(() => { setActiveTab(initialTab); }, [initialTab]);
+
+  // ---------- MH-04 ----------
+  const [q, setQ] = useState('');
+  const [fRole, setFRole] = useState('');
+  const [fStatus, setFStatus] = useState('');
+  const [formAcc, setFormAcc] = useState<{ account?: UserAccount } | null>(null);
+  const [tempPass, setTempPass] = useState<{ name: string; password: string } | null>(null);
+  const [resetAcc, setResetAcc] = useState<UserAccount | null>(null);
+  const [ownPassword, setOwnPassword] = useState(false);
+  const [lockAcc, setLockAcc] = useState<UserAccount | null>(null);
+
+  const filteredAccounts = accounts.filter(a => {
+    if (q && !`${a.name} ${a.username}`.toLowerCase().includes(q.toLowerCase())) return false;
+    if (fRole && normalizeRole(a.role) !== fRole) return false;
+    if (fStatus === 'active' && !a.isActive) return false;
+    if (fStatus === 'locked' && a.isActive) return false;
+    return true;
+  });
+
+  // ---------- MH-05 ----------
+  const [collapsed, setCollapsed] = useState<string[]>([]);
+
+  // ---------- MH-19 ----------
+  const [sq, setSq] = useState('');
+  const [sStatus, setSStatus] = useState('');
+  const [scopeAcc, setScopeAcc] = useState<UserAccount | null>(null);
+  const managers = accounts.filter(a => normalizeRole(a.role) === 'QUAN_LY')
+    .filter(a => !sq || `${a.name} ${a.username}`.toLowerCase().includes(sq.toLowerCase()))
+    .filter(a => !sStatus || (sStatus === 'active' ? a.isActive : !a.isActive));
+
+  // ---------- MH-20 ----------
+  const toDisplay = (s: string) => (s ? formatDateTime(s) : '');
+  const [draft, setDraft] = useState(() => ({
+    queryTime: toDisplay(config.evaluationTimestamp),
+    upcoming: String(config.upcomingThresholdDays),
+    session: String(config.sessionTimeoutMinutes),
+    maxMb: String(config.maxUploadSizeMB),
+    types: config.allowedFileTypes.split(',').filter(Boolean),
+    backup: String(config.backupRetentionCount ?? 7)
+  }));
+  const [cfgErr, setCfgErr] = useState<string | null>(null);
+  const [confirmQueryChange, setConfirmQueryChange] = useState<SystemConfig | null>(null);
+  const parseDisplay = (s: string) => {
+    const m = s.trim().match(/^(\d{2})\/(\d{2})\/(\d{4}) (\d{2}):(\d{2})$/);
+    if (!m) return null;
+    return `${m[3]}-${m[2]}-${m[1]} ${m[4]}:${m[5]}:00`;
+  };
+  const buildConfig = (): SystemConfig | string => {
+    let qt = '';
+    if (draft.queryTime.trim()) {
+      const p = parseDisplay(draft.queryTime);
+      if (!p || isNaN(new Date(p.replace(' ', 'T')).getTime())) return 'Thời điểm tra cứu không hợp lệ.';
+      qt = p;
+    }
+    const intIn = (v: string, min: number, max: number) => /^\d+$/.test(v) && +v >= min && +v <= max;
+    if (!intIn(draft.upcoming, 1, 30)) return 'Giá trị phải là số nguyên từ 1 đến 30.';
+    if (!intIn(draft.session, 5, 240)) return 'Giá trị phải là số nguyên từ 5 đến 240.';
+    if (!intIn(draft.maxMb, 1, 500)) return 'Giá trị phải là số nguyên từ 1 đến 500.';
+    if (draft.types.length === 0) return 'Vui lòng chọn ít nhất một loại tệp.';
+    if (!intIn(draft.backup, 1, 60)) return 'Giá trị phải là số nguyên từ 1 đến 60.';
+    return {
+      ...config,
+      evaluationTimestamp: qt,
+      upcomingThresholdDays: +draft.upcoming,
+      sessionTimeoutMinutes: +draft.session,
+      maxUploadSizeMB: +draft.maxMb,
+      allowedFileTypes: draft.types.join(','),
+      backupRetentionCount: +draft.backup
+    };
+  };
+  const built = buildConfig();
+  const dirty = typeof built !== 'string' && (
+    built.evaluationTimestamp !== config.evaluationTimestamp || built.upcomingThresholdDays !== config.upcomingThresholdDays ||
+    built.sessionTimeoutMinutes !== config.sessionTimeoutMinutes || built.maxUploadSizeMB !== config.maxUploadSizeMB ||
+    built.allowedFileTypes !== config.allowedFileTypes || built.backupRetentionCount !== (config.backupRetentionCount ?? 7));
+  const saveConfig = (c: SystemConfig) => {
+    const r = store.saveConfig(c);
+    if (!r.ok) return setCfgErr(r.message);
+    setCfgErr(null);
+    toast.show(r.message);
+  };
+
+  // ---------- MH-21 ----------
+  const monthStart = DEMO_QUERY_TIME.slice(0, 8) + '01';
+  const [aFrom, setAFrom] = useState(monthStart);
+  const [aTo, setATo] = useState(new Date().toISOString().slice(0, 10) > DEMO_QUERY_TIME.slice(0, 10) ? new Date().toISOString().slice(0, 10) : DEMO_QUERY_TIME.slice(0, 10));
+  const [aUser, setAUser] = useState('');
+  const [aAction, setAAction] = useState('');
+  const [aObject, setAObject] = useState('');
+  const [aPage, setAPage] = useState(1);
+  const [expanded, setExpanded] = useState<string | null>(null);
+  const objectTypes = useMemo(() => Array.from(new Set(['Dự án', 'Công việc', 'Phân công', 'Lịch nghỉ/bận', 'Phiên bản hồ sơ', 'Tài khoản', 'Nhân sự đội ngoài theo ngày', ...auditLogs.map(l => l.objectType)])), [auditLogs]);
+  const auditErr = aFrom && aTo && aTo < aFrom ? 'Ngày kết thúc không được trước ngày bắt đầu.' : null;
+  const auditRows = auditErr ? [] : auditLogs.filter(l => {
+    const d = l.time.slice(0, 10);
+    if (aFrom && d < aFrom) return false;
+    if (aTo && d > aTo) return false;
+    if (aUser && l.user !== aUser) return false;
+    if (aAction && l.action !== aAction) return false;
+    if (aObject && l.objectType !== aObject) return false;
+    return true;
+  }).sort((a, b) => b.time.localeCompare(a.time));
+  const AUDIT_PAGE = 10;
+  const pageRows = auditRows.slice((aPage - 1) * AUDIT_PAGE, aPage * AUDIT_PAGE);
+
+  const PAGE_TITLE: Record<AdminTab, string> = {
+    accounts: 'Quản lý tài khoản', matrix: 'Quản lý tài khoản', scope: 'Phạm vi dự án', config: 'Cấu hình hệ thống', audit: 'Nhật ký thao tác'
+  };
+  const isAccountsPage = activeTab === 'accounts' || activeTab === 'matrix';
+
+  return (
+    <div className="space-y-6">
+      {toast.node}
+
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-5 rounded-2xl border border-slate-200 shadow-xs">
         <div>
-          <div className="flex items-center gap-2">
-            <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-purple-100 text-purple-700">
-              PHÂN HỆ QUẢN TRỊ (AD)
-            </span>
-            <span className="text-xs text-slate-500 font-mono">AD-01 đến AD-06</span>
-          </div>
-          <h2 className="text-lg font-bold text-[#0D1A36] mt-1">
-            Quản Trị Hệ Thống, Phân Quyền &amp; Cấu Hình
-          </h2>
-          <p className="text-xs text-slate-500">
-            Giữ cửa hệ thống: Tạo/khóa tài khoản, phân bổ phạm vi dự án, giám sát tham số &amp; nhật ký thao tác
-          </p>
+          <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-purple-100 text-purple-700">QUẢN TRỊ HỆ THỐNG</span>
+          <h2 className="text-lg font-bold text-[#0D1A36] mt-1">{PAGE_TITLE[activeTab]}</h2>
         </div>
-
         {activeTab === 'accounts' && (
-          <button
-            type="button"
-            onClick={() => setIsModalOpen(true)}
-            className="flex items-center gap-2 px-4 py-2 bg-[#152A55] text-white rounded-xl text-xs font-semibold hover:bg-[#1E3A75] shadow-xs cursor-pointer self-start sm:self-auto"
-          >
-            <UserPlus className="w-4 h-4" />
-            <span>Tạo tài khoản mới (AD-02)</span>
+          <button type="button" onClick={() => setFormAcc({})}
+            className="flex items-center gap-2 px-4 py-2 bg-[#152A55] text-white rounded-xl text-xs font-semibold hover:bg-[#1E3A75] shadow-xs cursor-pointer self-start sm:self-auto">
+            <UserPlus className="w-4 h-4" /><span>+ Cấp tài khoản mới</span>
+          </button>
+        )}
+        {activeTab === 'config' && (
+          <button type="button" disabled={!dirty}
+            onClick={() => {
+              if (typeof built === 'string') return setCfgErr(built);
+              if (built.evaluationTimestamp !== config.evaluationTimestamp) return setConfirmQueryChange(built);
+              saveConfig(built);
+            }}
+            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl text-xs shadow-xs cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed self-start sm:self-auto">
+            Lưu thay đổi
           </button>
         )}
       </div>
 
-      {/* Navigation Sub-Tabs */}
-      <div className="flex items-center gap-2 border-b border-slate-200 overflow-x-auto text-xs font-semibold">
-        <button
-          onClick={() => setActiveTab('accounts')}
-          className={`pb-2.5 px-3 transition-colors border-b-2 flex items-center gap-2 whitespace-nowrap ${
-            activeTab === 'accounts'
-              ? 'border-blue-600 text-blue-700 font-bold'
-              : 'border-transparent text-slate-500 hover:text-slate-900'
-          }`}
-        >
-          <ShieldCheck className="w-4 h-4" />
-          <span>Tài khoản hệ thống (AD-01)</span>
-          <span className="px-1.5 py-0.2 rounded-full bg-slate-100 text-slate-600 text-[10px]">
-            {accounts.length}
-          </span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('scope')}
-          className={`pb-2.5 px-3 transition-colors border-b-2 flex items-center gap-2 whitespace-nowrap ${
-            activeTab === 'scope'
-              ? 'border-blue-600 text-blue-700 font-bold'
-              : 'border-transparent text-slate-500 hover:text-slate-900'
-          }`}
-        >
-          <FolderKanban className="w-4 h-4" />
-          <span>Phạm vi dự án (AD-04)</span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('config')}
-          className={`pb-2.5 px-3 transition-colors border-b-2 flex items-center gap-2 whitespace-nowrap ${
-            activeTab === 'config'
-              ? 'border-blue-600 text-blue-700 font-bold'
-              : 'border-transparent text-slate-500 hover:text-slate-900'
-          }`}
-        >
-          <Settings className="w-4 h-4" />
-          <span>Cấu hình tham số (AD-05)</span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('audit')}
-          className={`pb-2.5 px-3 transition-colors border-b-2 flex items-center gap-2 whitespace-nowrap ${
-            activeTab === 'audit'
-              ? 'border-blue-600 text-blue-700 font-bold'
-              : 'border-transparent text-slate-500 hover:text-slate-900'
-          }`}
-        >
-          <History className="w-4 h-4" />
-          <span>Nhật ký thao tác (AD-06)</span>
-          <span className="px-1.5 py-0.2 rounded-full bg-slate-100 text-slate-600 text-[10px]">
-            {auditLogs.length}
-          </span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('matrix')}
-          className={`pb-2.5 px-3 transition-colors border-b-2 flex items-center gap-2 whitespace-nowrap ${
-            activeTab === 'matrix'
-              ? 'border-blue-600 text-blue-700 font-bold'
-              : 'border-transparent text-slate-500 hover:text-slate-900'
-          }`}
-        >
-          <Table className="w-4 h-4" />
-          <span>Ma trận phân quyền vai trò</span>
-        </button>
-      </div>
-
-      {/* ========================================================================= */}
-      {/* TAB 1: ACCOUNTS LIST (AD-01, AD-03) */}
-      {/* ========================================================================= */}
-      {activeTab === 'accounts' && (
-        <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-xs">
-          <div className="px-5 py-3 bg-slate-50 border-b border-slate-200 flex items-center justify-between text-xs">
-            <span className="font-bold text-slate-700">Danh sách tài khoản đăng nhập CSDL (9 tài khoản demo)</span>
-            <span className="text-slate-500 text-[11px]">Mật khẩu chung kiểm thử: <code className="font-mono bg-white px-1.5 py-0.5 rounded border border-slate-200">Nmh@2026</code></span>
-          </div>
-
-          <div className="divide-y divide-slate-100">
-            {accounts.map((acc) => {
-              const isSelf = acc.id === currentUser.id;
-              const isManager = acc.role === 'QUAN_LY' || acc.role === 'manager';
-              const isLocked = !acc.isActive;
-
-              return (
-                <div 
-                  key={acc.id}
-                  className={`p-4 flex flex-col md:flex-row md:items-center justify-between gap-4 transition-colors ${
-                    isLocked ? 'bg-red-50/30' : 'hover:bg-slate-50/70'
-                  }`}
-                >
-                  <div className="flex items-center gap-3.5">
-                    <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-xs shrink-0 ${
-                      isLocked ? 'bg-slate-300 text-slate-600' : 'bg-[#152A55] text-amber-300'
-                    }`}>
-                      {acc.name.slice(0, 2).toUpperCase()}
-                    </div>
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className={`font-bold text-sm ${isLocked ? 'line-through text-slate-400' : 'text-[#0D1A36]'}`}>
-                          {acc.name}
-                        </span>
-                        <span className="font-mono text-xs text-slate-500 font-medium">@{acc.username}</span>
-                        {isSelf && (
-                          <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 font-bold border border-blue-200">
-                            Bạn đang dùng
-                          </span>
-                        )}
-                      </div>
-                      <div className="text-xs text-slate-500 flex items-center gap-2 mt-0.5">
-                        <span>{acc.email}</span>
-                        {isManager && (
-                          <span className="text-[11px] text-blue-700 font-medium bg-blue-50/80 px-2 py-0.5 rounded">
-                            Phạm vi: {acc.assignedProjectIds?.length || 0} dự án
-                          </span>
-                        )}
-                        {isLocked && acc.lockReason && (
-                          <span className="text-[11px] text-red-700 font-medium bg-red-100 px-2 py-0.5 rounded">
-                            Lý do: {acc.lockReason}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-3 flex-wrap">
-                    {/* Role selector */}
-                    <div className="text-xs">
-                      <select
-                        value={acc.role}
-                        disabled={isSelf || isLocked}
-                        onChange={(e) => onUpdateRole(acc.id, e.target.value as UserRole)}
-                        className="px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg text-slate-800 font-semibold disabled:opacity-60 text-xs"
-                      >
-                        <option value="QUAN_LY">Quản lý dự án (QUAN_LY)</option>
-                        <option value="DOI_TRUONG">Đội trưởng thi công (DOI_TRUONG)</option>
-                        <option value="BAN_GIAM_DOC">Ban Giám Đốc (BAN_GIAM_DOC)</option>
-                        <option value="QUAN_TRI">Quản trị hệ thống (QUAN_TRI)</option>
-                      </select>
-                    </div>
-
-                    {/* Status Badge */}
-                    <span className={`text-[11px] font-bold px-2.5 py-1 rounded-full border ${
-                      acc.isActive 
-                        ? 'bg-emerald-50 text-emerald-700 border-emerald-200' 
-                        : 'bg-red-50 text-red-700 border-red-200'
-                    }`}>
-                      {acc.isActive ? 'Đang hoạt động' : 'Bị khóa'}
-                    </span>
-
-                    {/* Actions (AD-03) */}
-                    <div className="flex items-center gap-1.5">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          onResetPassword(acc.id);
-                          showToast(`Đã cấp lại mật khẩu tạm Nmh@2026 cho ${acc.name}`);
-                        }}
-                        className="p-1.5 text-slate-500 hover:text-blue-700 hover:bg-blue-50 rounded-lg text-xs"
-                        title="Đặt lại mật khẩu tạm"
-                      >
-                        <KeyRound className="w-4 h-4" />
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setLockModalAcc(acc);
-                          setLockReason(acc.isActive ? 'Nghỉ việc; khóa theo quy trình bàn giao' : '');
-                        }}
-                        disabled={isSelf}
-                        className={`p-1.5 rounded-lg text-xs transition-colors ${
-                          acc.isActive 
-                            ? 'text-slate-500 hover:text-red-600 hover:bg-red-50' 
-                            : 'text-emerald-700 hover:bg-emerald-50 bg-emerald-50/50'
-                        } disabled:opacity-30`}
-                        title={acc.isActive ? 'Khóa tài khoản (AD-03)' : 'Mở khóa tài khoản'}
-                      >
-                        {acc.isActive ? <Lock className="w-4 h-4" /> : <Unlock className="w-4 h-4" />}
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* ========================================================================= */}
-      {/* TAB 2: PROJECT SCOPE MANAGEMENT (AD-04) */}
-      {/* ========================================================================= */}
-      {activeTab === 'scope' && (
-        <div className="bg-white rounded-2xl border border-slate-200 p-6 space-y-6 shadow-xs">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-200">
-            <div>
-              <h3 className="font-bold text-sm text-[#0D1A36]">Phạm Vi Dự Án Của Tài Khoản Quản Lý (AD-04)</h3>
-              <p className="text-xs text-slate-500 mt-0.5">
-                Chỉ tài khoản vai trò Quản lý mới cần cấp phạm vi. Ban Giám Đốc thấy tất cả; Đội trưởng thấy theo phân công.
-              </p>
-            </div>
-
-            {/* Select Manager Account */}
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-semibold text-slate-600">Chọn Quản lý:</span>
-              <select
-                value={selectedManagerId}
-                onChange={(e) => setSelectedManagerId(e.target.value)}
-                className="px-3 py-1.5 bg-slate-50 border border-slate-300 rounded-lg text-xs font-bold text-slate-900"
-              >
-                {managerAccounts.map(m => (
-                  <option key={m.id} value={m.id}>{m.name} (@{m.username})</option>
-                ))}
-              </select>
-            </div>
-          </div>
-
-          {/* 2-Column Dual Listbox (AD-04) */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {/* Column 1: Dự án chưa cấp */}
-            <div className="border border-slate-200 rounded-xl overflow-hidden bg-slate-50/50 flex flex-col">
-              <div className="px-4 py-2.5 bg-slate-100 border-b border-slate-200 flex items-center justify-between">
-                <span className="font-bold text-xs text-slate-700">Dự án chưa cấp ({unassignedProjects.length})</span>
-                {unassignedProjects.length > 0 && (
-                  <button
-                    type="button"
-                    onClick={handleGrantAll}
-                    className="text-[11px] font-bold text-blue-700 hover:underline"
-                  >
-                    Cấp tất cả
-                  </button>
-                )}
-              </div>
-
-              <div className="p-3 space-y-2 flex-1 max-h-96 overflow-y-auto">
-                {unassignedProjects.length === 0 ? (
-                  <div className="py-8 text-center text-slate-400 text-xs">
-                    Đã cấp toàn bộ dự án cho Quản lý này
-                  </div>
-                ) : (
-                  unassignedProjects.map(p => (
-                    <div 
-                      key={p.id}
-                      className="p-3 bg-white rounded-lg border border-slate-200 flex items-center justify-between gap-2 shadow-2xs hover:border-blue-300 transition-colors"
-                    >
-                      <div className="min-w-0">
-                        <div className="font-mono text-[11px] font-bold text-slate-500">{p.code}</div>
-                        <div className="font-bold text-xs text-slate-900 truncate">{p.name}</div>
-                        <div className="text-[10px] text-slate-400 mt-0.5">{p.status} · {p.place}</div>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => handleGrantProject(p.id)}
-                        className="px-2.5 py-1.5 bg-blue-50 hover:bg-blue-600 text-blue-700 hover:text-white rounded-lg text-xs font-semibold flex items-center gap-1 transition-colors shrink-0"
-                        title="Cấp dự án này"
-                      >
-                        <span>Cấp</span>
-                        <ArrowRight className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
-
-            {/* Column 2: Dự án đã cấp */}
-            <div className="border border-blue-200 rounded-xl overflow-hidden bg-blue-50/30 flex flex-col">
-              <div className="px-4 py-2.5 bg-blue-100 border-b border-blue-200 flex items-center justify-between">
-                <span className="font-bold text-xs text-blue-900">
-                  Dự án đã cấp cho {currentManager?.name} ({assignedProjects.length})
-                </span>
-                <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-200 text-blue-800 font-bold">
-                  Phạm vi P
-                </span>
-              </div>
-
-              <div className="p-3 space-y-2 flex-1 max-h-96 overflow-y-auto">
-                {assignedProjects.length === 0 ? (
-                  <div className="py-8 text-center text-slate-400 text-xs">
-                    Chưa cấp dự án nào cho Quản lý này
-                  </div>
-                ) : (
-                  assignedProjects.map(p => (
-                    <div 
-                      key={p.id}
-                      className="p-3 bg-white rounded-lg border border-blue-200 flex items-center justify-between gap-2 shadow-2xs"
-                    >
-                      <div className="min-w-0">
-                        <div className="font-mono text-[11px] font-bold text-blue-700">{p.code}</div>
-                        <div className="font-bold text-xs text-slate-900 truncate">{p.name}</div>
-                        <div className="text-[10px] text-slate-500 mt-0.5">
-                          Cấp bởi Quản trị hệ thống · Có hiệu lực
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => handleRevokeProject(p.id)}
-                        className="px-2.5 py-1.5 bg-red-50 hover:bg-red-600 text-red-700 hover:text-white rounded-lg text-xs font-semibold flex items-center gap-1 transition-colors shrink-0"
-                        title="Gỡ dự án khỏi phạm vi"
-                      >
-                        <ArrowLeft className="w-3.5 h-3.5" />
-                        <span>Gỡ</span>
-                      </button>
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ========================================================================= */}
-      {/* TAB 3: SYSTEM CONFIGURATION (AD-05) */}
-      {/* ========================================================================= */}
-      {activeTab === 'config' && (
-        <div className="bg-white rounded-2xl border border-slate-200 p-6 space-y-6 shadow-xs">
-          <div className="pb-3 border-b border-slate-200">
-            <h3 className="font-bold text-sm text-[#0D1A36]">Cấu Hình 6 Tham Số Hệ Thống (AD-05)</h3>
-            <p className="text-xs text-slate-500 mt-0.5">
-              Các tham số trong bảng CSDL <code className="font-mono text-blue-700">cau_hinh</code> quyết định quy tắc tính toán hạn, cảnh báo và dung lượng
-            </p>
-          </div>
-
-          {/* Yellow warning banner for THOI_DIEM_TRA_CUU */}
-          <div className="p-4 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 flex items-start gap-3">
-            <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
-            <div className="text-xs">
-              <span className="font-bold">Lưu ý quan trọng về Mốc Tra Cứu (THOI_DIEM_TRA_CUU):</span>
-              <p className="mt-0.5 opacity-90 leading-relaxed">
-                Thay đổi mốc này sẽ làm đổi kết quả cảnh báo quá hạn và sắp đến hạn của toàn hệ thống. Mốc mặc định của bộ dữ liệu khóa luận là <strong className="font-mono">{DEMO_QUERY_TIME}</strong>.
-              </p>
-            </div>
-          </div>
-
-          {/* 6 Config rows */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
-            <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/50 space-y-2">
-              <label className="font-bold text-slate-800 flex items-center gap-1.5">
-                <Clock className="w-4 h-4 text-blue-600" />
-                1. Mốc thời gian tra cứu (THOI_DIEM_TRA_CUU)
-              </label>
-              <input
-                type="text"
-                value={configQueryTime}
-                onChange={(e) => setConfigQueryTime(e.target.value)}
-                className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg font-mono text-slate-900 font-bold"
-              />
-              <p className="text-[11px] text-slate-500">Mặc định: 12/10/2026 09:00:00 (để trống để dùng giờ hệ thống thật)</p>
-            </div>
-
-            <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/50 space-y-2">
-              <label className="font-bold text-slate-800">
-                2. Số ngày tính là sắp đến hạn (SO_NGAY_SAP_DEN_HAN)
-              </label>
-              <input
-                type="number"
-                min={1}
-                max={30}
-                value={configUpcomingDays}
-                onChange={(e) => setConfigUpcomingDays(parseInt(e.target.value, 10) || 7)}
-                className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg font-mono text-slate-900 font-bold"
-              />
-              <p className="text-[11px] text-slate-500">Khoảng hợp lệ: 1 đến 30 ngày (Giá trị demo: 7 ngày)</p>
-            </div>
-
-            <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/50 space-y-2">
-              <label className="font-bold text-slate-800">
-                3. Thời gian hết phiên làm việc (THOI_GIAN_HET_PHIEN_PHUT)
-              </label>
-              <input
-                type="number"
-                min={5}
-                max={240}
-                value={configSessionTimeout}
-                onChange={(e) => setConfigSessionTimeout(parseInt(e.target.value, 10) || 30)}
-                className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg font-mono text-slate-900 font-bold"
-              />
-              <p className="text-[11px] text-slate-500">Tự động đăng xuất sau 30 phút không thao tác</p>
-            </div>
-
-            <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/50 space-y-2">
-              <label className="font-bold text-slate-800">
-                4. Dung lượng tải lên tối đa mỗi tệp (DUNG_LUONG_TAI_LEN_TOI_DA_MB)
-              </label>
-              <input
-                type="number"
-                min={1}
-                max={500}
-                value={configMaxUploadMB}
-                onChange={(e) => setConfigMaxUploadMB(parseInt(e.target.value, 10) || 50)}
-                className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg font-mono text-slate-900 font-bold"
-              />
-              <p className="text-[11px] text-slate-500">Giới hạn tối đa: 50 MB / tệp</p>
-            </div>
-
-            <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/50 space-y-2 md:col-span-2">
-              <label className="font-bold text-slate-800">
-                5. Loại tệp được phép tải lên (LOAI_TEP_CHO_PHEP)
-              </label>
-              <div className="flex flex-wrap gap-2 pt-1">
-                {configAllowedFiles.map((f, idx) => (
-                  <span key={idx} className="px-2.5 py-1 bg-white border border-slate-300 rounded-lg font-medium text-slate-800 text-xs">
-                    ✓ {f}
-                  </span>
-                ))}
-              </div>
-              <p className="text-[11px] text-slate-500">5 định dạng kỹ thuật: Bản vẽ CAD (.dwg), PDF, Ảnh hiện trường (JPG/PNG), Bảng tính (XLSX), Bộ hồ sơ nén (ZIP)</p>
-            </div>
-          </div>
-
-          <button
-            type="button"
-            onClick={() => showToast('Đã lưu cấu hình hệ thống! Đã ghi nhật ký thao tác loại DIEU_CHINH.')}
-            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl text-xs shadow-xs cursor-pointer"
-          >
-            Lưu thay đổi cấu hình
+      {/* MH-04 có hai tab: Tài khoản (n) và Vai trò và quyền */}
+      {isAccountsPage && (
+        <div className="flex items-center gap-2 border-b border-slate-200 overflow-x-auto text-xs font-semibold">
+          <button onClick={() => setActiveTab('accounts')} className={`pb-2.5 px-3 transition-colors border-b-2 flex items-center gap-2 whitespace-nowrap cursor-pointer ${activeTab === 'accounts' ? 'border-blue-600 text-blue-700 font-bold' : 'border-transparent text-slate-500 hover:text-slate-900'}`}>
+            <ShieldCheck className="w-4 h-4" /><span>Tài khoản ({filteredAccounts.length})</span>
+          </button>
+          <button onClick={() => setActiveTab('matrix')} className={`pb-2.5 px-3 transition-colors border-b-2 flex items-center gap-2 whitespace-nowrap cursor-pointer ${activeTab === 'matrix' ? 'border-blue-600 text-blue-700 font-bold' : 'border-transparent text-slate-500 hover:text-slate-900'}`}>
+            <Table className="w-4 h-4" /><span>Vai trò và quyền</span>
           </button>
         </div>
       )}
 
-      {/* ========================================================================= */}
-      {/* TAB 4: AUDIT LOG (AD-06) */}
-      {/* ========================================================================= */}
-      {activeTab === 'audit' && (
+      {/* ===== MH-04: Tab Tài khoản ===== */}
+      {activeTab === 'accounts' && (
         <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-xs">
-          <div className="px-5 py-3 bg-slate-50 border-b border-slate-200 flex items-center justify-between text-xs">
-            <span className="font-bold text-slate-700">Nhật Ký Thao Tác Bất Biến (AD-06 / nhat_ky_thao_tac)</span>
-            <span className="text-slate-500 text-[11px]">Chỉ đọc · Lưu vết Trước $\rightarrow$ Sau dạng JSON</span>
+          <div className="px-5 py-3 bg-slate-50 border-b border-slate-200 flex flex-wrap items-center gap-2 text-xs">
+            <div className="relative">
+              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+              <input value={q} onChange={e => setQ(e.target.value)} placeholder="Tìm họ tên hoặc tên đăng nhập" className="pl-8 pr-3 py-1.5 bg-white border border-slate-300 rounded-lg w-64" />
+            </div>
+            <select value={fRole} onChange={e => setFRole(e.target.value)} className="px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg">
+              <option value="">Mọi vai trò</option>
+              {ROLES.map(r => <option key={r} value={r}>{ROLE_LABEL[r]}</option>)}
+            </select>
+            <select value={fStatus} onChange={e => setFStatus(e.target.value)} className="px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg">
+              <option value="">Mọi trạng thái</option>
+              <option value="active">Đang hoạt động</option>
+              <option value="locked">Bị khóa</option>
+            </select>
           </div>
-
-          <div className="divide-y divide-slate-100 text-xs">
-            {auditLogs.map((log) => {
-              const isExpanded = expandedLogId === log.id;
-              return (
-                <div key={log.id} className="p-4 hover:bg-slate-50/60 transition-colors">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="flex items-center gap-3">
-                      <span className="font-mono text-slate-500 text-[11px]">{log.time}</span>
-                      <span className="font-bold text-[#152A55]">@{log.user}</span>
-                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                        log.action === 'KHOA' ? 'bg-red-100 text-red-800' :
-                        log.action === 'TAO_MOI' ? 'bg-emerald-100 text-emerald-800' :
-                        'bg-blue-100 text-blue-800'
-                      }`}>
-                        {log.actionLabel}
-                      </span>
-                      <span className="font-semibold text-slate-900">{log.target}</span>
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={() => setExpandedLogId(isExpanded ? null : log.id)}
-                      className="text-xs text-blue-600 hover:underline flex items-center gap-1 cursor-pointer"
-                    >
-                      <span>{isExpanded ? 'Thu gọn' : 'So sánh Trước/Sau'}</span>
-                      {isExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-                    </button>
-                  </div>
-
-                  <p className="text-[11px] text-slate-500 mt-1 pl-1 border-l-2 border-slate-300">
-                    Lý do: {log.reason}
-                  </p>
-
-                  {/* Expanded JSON Before/After */}
-                  {isExpanded && (
-                    <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3 p-3 bg-slate-50 rounded-xl border border-slate-200 font-mono text-[11px]">
-                      <div>
-                        <div className="font-bold text-slate-500 mb-1">Giá trị trước (gia_tri_cu):</div>
-                        <pre className="p-2 bg-white rounded border border-slate-200 overflow-x-auto text-slate-600">
-                          {log.oldVal ? JSON.stringify(log.oldVal, null, 2) : 'null (Tạo mới)'}
-                        </pre>
-                      </div>
-                      <div>
-                        <div className="font-bold text-blue-700 mb-1">Giá trị sau (gia_tri_moi):</div>
-                        <pre className="p-2 bg-white rounded border border-blue-200 overflow-x-auto text-blue-900">
-                          {JSON.stringify(log.newVal, null, 2)}
-                        </pre>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* ========================================================================= */}
-      {/* TAB 5: ROLE PERMISSION MATRIX */}
-      {/* ========================================================================= */}
-      {activeTab === 'matrix' && (
-        <div className="bg-white rounded-2xl border border-slate-200 p-6 space-y-4 shadow-xs">
-          <div className="pb-3 border-b border-slate-200">
-            <h3 className="font-bold text-sm text-[#0D1A36]">Ma Trận Phân Quyền 4 Vai Trò Chuẩn Khóa Luận</h3>
-            <p className="text-xs text-slate-500 mt-0.5">
-              Đủ = Toàn quyền; Xem = Chỉ xem; P = Phạm vi dự án được cấp; G = Công việc được giao
-            </p>
-          </div>
-
           <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs border border-slate-200 rounded-xl overflow-hidden">
-              <thead className="bg-slate-50 text-slate-700 border-b border-slate-200 uppercase font-bold text-[10px]">
-                <tr>
-                  <th className="p-3">Chức năng</th>
-                  <th className="p-3 text-purple-700">Quản trị (QUAN_TRI)</th>
-                  <th className="p-3 text-blue-700">Quản lý (QUAN_LY)</th>
-                  <th className="p-3 text-amber-700">Đội trưởng (DOI_TRUONG)</th>
-                  <th className="p-3 text-emerald-700">Ban Giám Đốc (BAN_GIAM_DOC)</th>
-                </tr>
+            <table className="w-full text-left text-xs">
+              <thead className="bg-slate-50 text-slate-600 border-b border-slate-200 text-[10px] uppercase font-bold">
+                <tr><th className="p-3">Họ tên hiển thị / tên đăng nhập</th><th className="p-3">Vai trò</th><th className="p-3">Nhân sự liên kết</th><th className="p-3">Trạng thái</th><th className="p-3">Đăng nhập gần nhất</th><th className="p-3 text-right">Thao tác</th></tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                <tr>
-                  <td className="p-3 font-semibold text-slate-900">Tài khoản &amp; Cấu hình (AD)</td>
-                  <td className="p-3 font-bold text-purple-700">Đủ</td>
-                  <td className="p-3 text-slate-400">—</td>
-                  <td className="p-3 text-slate-400">—</td>
-                  <td className="p-3 text-slate-400">—</td>
-                </tr>
-                <tr>
-                  <td className="p-3 font-semibold text-slate-900">Dự án &amp; Hạng mục (PR-02, PR-04)</td>
-                  <td className="p-3 text-slate-400">—</td>
-                  <td className="p-3 font-bold text-blue-700">Đủ, P (5 dự án)</td>
-                  <td className="p-3 text-amber-700">Xem, G</td>
-                  <td className="p-3 text-emerald-700">Xem (Cả 10 dự án)</td>
-                </tr>
-                <tr>
-                  <td className="p-3 font-semibold text-slate-900">Lập &amp; Hủy phân công (HR-07, HR-08)</td>
-                  <td className="p-3 text-slate-400">—</td>
-                  <td className="p-3 font-bold text-blue-700">Đủ, P</td>
-                  <td className="p-3 text-slate-400">—</td>
-                  <td className="p-3 text-emerald-700">Xem</td>
-                </tr>
-                <tr>
-                  <td className="p-3 font-semibold text-slate-900">Gửi cập nhật &amp; Minh chứng (RS-02)</td>
-                  <td className="p-3 text-slate-400">—</td>
-                  <td className="p-3 text-blue-700">Xem, P</td>
-                  <td className="p-3 font-bold text-amber-700">Đủ, G (Ảnh hiện trường)</td>
-                  <td className="p-3 text-emerald-700">Xem</td>
-                </tr>
-                <tr>
-                  <td className="p-3 font-semibold text-slate-900">Xác nhận hoàn thành việc &amp; dự án</td>
-                  <td className="p-3 text-slate-400">—</td>
-                  <td className="p-3 font-bold text-blue-700">Đủ, P (Duy nhất)</td>
-                  <td className="p-3 text-slate-400">—</td>
-                  <td className="p-3 text-slate-400">—</td>
-                </tr>
-                <tr>
-                  <td className="p-3 font-semibold text-slate-900">Hồ sơ bản vẽ kỹ thuật (DC-01 đến DC-05)</td>
-                  <td className="p-3 text-slate-400">—</td>
-                  <td className="p-3 font-bold text-blue-700">Đủ, P (Chọn bản triển khai)</td>
-                  <td className="p-3 text-amber-700">Xem bản triển khai (DC-02a)</td>
-                  <td className="p-3 text-emerald-700">Xem</td>
-                </tr>
+                {filteredAccounts.map(acc => {
+                  const isSelf = acc.id === currentUser.id;
+                  const linked = staff.find(s => s.id === acc.staffId);
+                  return (
+                    <tr key={acc.id} className={!acc.isActive ? 'bg-red-50/30' : 'hover:bg-slate-50/70'}>
+                      <td className="p-3">
+                        <div className="flex items-center gap-2">
+                          <span className="font-bold text-sm text-[#0D1A36]">{acc.name}</span>
+                          {isSelf && <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 font-bold border border-blue-200">Bạn đang đăng nhập</span>}
+                        </div>
+                        <div className="font-mono text-[11px] text-slate-500">{acc.username}</div>
+                      </td>
+                      <td className="p-3"><span className="text-[11px] font-semibold px-2 py-0.5 rounded bg-slate-100 text-slate-700">{ROLE_LABEL[normalizeRole(acc.role)]}</span></td>
+                      <td className="p-3">{linked ? `${linked.code} – ${linked.name}` : <span className="text-slate-400">Chưa liên kết</span>}</td>
+                      <td className="p-3">
+                        <span className={`text-[11px] font-bold px-2.5 py-1 rounded-full border ${acc.isActive ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-red-50 text-red-700 border-red-200'}`}>{acc.isActive ? 'Đang hoạt động' : 'Bị khóa'}</span>
+                        {!acc.isActive && acc.lockReason && <div className="text-[10px] text-red-700 mt-1">Lý do: {acc.lockReason}</div>}
+                      </td>
+                      <td className="p-3 font-mono text-slate-600">{acc.lastLogin ? formatDateTime(acc.lastLogin) : 'Chưa đăng nhập'}</td>
+                      <td className="p-3">
+                        <div className="flex items-center justify-end gap-1.5">
+                          <button type="button" title="Sửa" onClick={() => setFormAcc({ account: acc })} className="p-1.5 text-slate-500 hover:text-blue-700 hover:bg-blue-50 rounded-lg cursor-pointer"><Pencil className="w-4 h-4" /></button>
+                          <button type="button" title={isSelf ? 'Đổi mật khẩu của bạn' : 'Đặt lại mật khẩu'} onClick={() => isSelf ? setOwnPassword(true) : setResetAcc(acc)} className="p-1.5 text-slate-500 hover:text-blue-700 hover:bg-blue-50 rounded-lg cursor-pointer"><KeyRound className="w-4 h-4" /></button>
+                          <button type="button" disabled={isSelf} title={isSelf ? 'Không thể khóa tài khoản của chính bạn' : acc.isActive ? 'Khóa tài khoản' : 'Mở khóa tài khoản'} onClick={() => setLockAcc(acc)}
+                            className={`p-1.5 rounded-lg transition-colors disabled:opacity-30 cursor-pointer ${acc.isActive ? 'text-slate-500 hover:text-red-600 hover:bg-red-50' : 'text-emerald-700 hover:bg-emerald-50 bg-emerald-50/50'}`}>
+                            {acc.isActive ? <Lock className="w-4 h-4" /> : <Unlock className="w-4 h-4" />}
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
         </div>
       )}
 
-      {/* Lock/Unlock Account Modal (AD-03) */}
-      {lockModalAcc && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs">
-          <div className="w-full max-w-md bg-white rounded-2xl p-6 shadow-2xl border border-slate-200 space-y-4">
-            <div className="flex items-center gap-3">
-              <div className={`p-2 rounded-xl ${lockModalAcc.isActive ? 'bg-red-100 text-red-700' : 'bg-emerald-100 text-emerald-700'}`}>
-                {lockModalAcc.isActive ? <Lock className="w-5 h-5" /> : <Unlock className="w-5 h-5" />}
-              </div>
-              <div>
-                <h3 className="font-bold text-sm text-[#0D1A36]">
-                  {lockModalAcc.isActive ? 'Khóa tài khoản (AD-03)' : 'Mở khóa tài khoản'}
-                </h3>
-                <p className="text-xs text-slate-500">{lockModalAcc.name} (@{lockModalAcc.username})</p>
-              </div>
-            </div>
-
-            {lockModalAcc.isActive && (
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  Lý do khóa tài khoản (bắt buộc, $\ge$ 5 ký tự) *
-                </label>
-                <textarea
-                  rows={3}
-                  value={lockReason}
-                  onChange={(e) => setLockReason(e.target.value)}
-                  placeholder="Ví dụ: Nghỉ việc; khóa theo quy trình bàn giao"
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs"
-                />
-              </div>
-            )}
-
-            <div className="flex items-center justify-end gap-2 pt-2">
-              <button
-                type="button"
-                onClick={() => setLockModalAcc(null)}
-                className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 hover:bg-slate-100"
-              >
-                Hủy bỏ
-              </button>
-              <button
-                type="button"
-                onClick={handleConfirmLock}
-                className={`px-4 py-2 rounded-xl text-xs font-bold text-white shadow-xs ${
-                  lockModalAcc.isActive ? 'bg-red-600 hover:bg-red-700' : 'bg-emerald-600 hover:bg-emerald-700'
-                }`}
-              >
-                {lockModalAcc.isActive ? 'Xác nhận khóa' : 'Xác nhận mở khóa'}
-              </button>
-            </div>
+      {/* ===== MH-05: Vai trò và quyền (chỉ xem) ===== */}
+      {activeTab === 'matrix' && (
+        <div className="bg-white rounded-2xl border border-slate-200 p-6 space-y-4 shadow-xs">
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs border border-slate-200">
+              <thead className="bg-slate-50 text-slate-700 border-b border-slate-200">
+                <tr>
+                  <th className="p-3 w-64">Chức năng</th>
+                  {ROLES.map(r => (
+                    <th key={r} className="p-3">
+                      <div className="font-bold text-[#0D1A36]">{ROLE_SCOPE[r].title}</div>
+                      <div className="text-[10px] font-normal text-slate-500">Phạm vi dữ liệu: {ROLE_SCOPE[r].scope}</div>
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {PERMISSION_MATRIX.map(g => {
+                  const isCollapsed = collapsed.includes(g.group);
+                  return (
+                    <React.Fragment key={g.group}>
+                      <tr className="bg-slate-100/70 cursor-pointer" onClick={() => setCollapsed(isCollapsed ? collapsed.filter(x => x !== g.group) : [...collapsed, g.group])}>
+                        <td colSpan={5} className="p-2.5 font-bold text-slate-800">
+                          <span className="inline-flex items-center gap-1">{isCollapsed ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronUp className="w-3.5 h-3.5" />}{g.group}</span>
+                        </td>
+                      </tr>
+                      {!isCollapsed && g.rows.map(row => (
+                        <tr key={row.feature} className="border-t border-slate-100">
+                          <td className="p-3 font-semibold text-slate-900">{row.feature}</td>
+                          {ROLES.map(r => (
+                            <td key={r} className="p-3" title={row.perms[r].note}>
+                              {row.perms[r].labels.length === 0 ? <span className="text-slate-400">—</span> : (
+                                <div className="flex flex-wrap gap-1">
+                                  {row.perms[r].labels.map((l: PermLabel) => <span key={l} className="text-[10px] px-1.5 py-0.5 rounded bg-blue-50 text-blue-800 border border-blue-200 font-semibold">{l}</span>)}
+                                </div>
+                              )}
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                    </React.Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 text-[11px] text-slate-600 leading-relaxed">
+            <strong>Chú giải:</strong> Xem – xem dữ liệu; Tạo – thêm mới; Sửa – điều chỉnh; Duyệt – xác nhận, phê duyệt hoặc chọn bản triển khai; Hủy – hủy bản ghi (không xóa);
+            Khóa – khóa/mở khóa tài khoản; Xem nhật ký – tra cứu nhật ký thao tác; "—" – không có quyền. Di chuột vào ô để xem phạm vi áp dụng.
+            Ma trận ở chế độ chỉ xem; muốn đổi quyền của một người dùng, Quản trị viên đổi vai trò ở tab Tài khoản.
           </div>
         </div>
       )}
 
-      {/* Create Account Modal (AD-02) */}
-      {isModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs">
-          <div className="w-full max-w-lg bg-white rounded-2xl p-6 shadow-2xl border border-slate-200 space-y-4">
-            <h3 className="font-bold text-base text-[#0D1A36]">Tạo Tài Khoản Người Dùng Mới (AD-02)</h3>
-            <form onSubmit={handleCreateAccountSubmit} className="space-y-3.5 text-xs">
-              <div>
-                <label className="block text-slate-700 font-semibold mb-1">Tên đăng nhập (chữ thường, không dấu) *</label>
-                <input
-                  type="text"
-                  required
-                  value={newUsername}
-                  onChange={(e) => setNewUsername(e.target.value.toLowerCase().replace(/[^a-z0-9._-]/g, ''))}
-                  placeholder="ví dụ: qly.minh, dt.hai"
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl font-mono text-slate-900"
-                />
-              </div>
-
-              <div>
-                <label className="block text-slate-700 font-semibold mb-1">Tên hiển thị *</label>
-                <input
-                  type="text"
-                  required
-                  value={newName}
-                  onChange={(e) => setNewName(e.target.value)}
-                  placeholder="ví dụ: Nguyễn Quang Minh"
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-slate-900"
-                />
-              </div>
-
-              <div>
-                <label className="block text-slate-700 font-semibold mb-1">Vai trò hệ thống *</label>
-                <select
-                  value={newRole}
-                  onChange={(e) => setNewRole(e.target.value as UserRole)}
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl font-semibold"
-                >
-                  <option value="QUAN_LY">Quản lý dự án (QUAN_LY)</option>
-                  <option value="DOI_TRUONG">Đội trưởng thi công (DOI_TRUONG)</option>
-                  <option value="BAN_GIAM_DOC">Ban Giám Đốc (BAN_GIAM_DOC)</option>
-                  <option value="QUAN_TRI">Quản trị hệ thống (QUAN_TRI)</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-slate-700 font-semibold mb-1">Nhân sự liên kết (tùy chọn)</label>
-                <select
-                  value={newStaffId}
-                  onChange={(e) => setNewStaffId(e.target.value)}
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl"
-                >
-                  <option value="">-- Không liên kết nhân sự --</option>
-                  {staff.filter(s => s.isActive).map(s => (
-                    <option key={s.id} value={s.id}>{s.name} ({s.code} - {s.roleTitleDisplay})</option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="flex items-center justify-end gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setIsModalOpen(false)}
-                  className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 hover:bg-slate-100"
-                >
-                  Hủy
-                </button>
-                <button
-                  type="submit"
-                  className="px-4 py-2 bg-[#152A55] text-white font-bold rounded-xl text-xs hover:bg-[#1E3A75] shadow-xs cursor-pointer"
-                >
-                  Tạo tài khoản
-                </button>
-              </div>
-            </form>
+      {/* ===== MH-19: Phạm vi dự án ===== */}
+      {activeTab === 'scope' && (
+        <div className="bg-white rounded-2xl border border-slate-200 p-6 space-y-4 shadow-xs">
+          <div className="flex flex-wrap gap-2 text-xs">
+            <input value={sq} onChange={e => setSq(e.target.value)} placeholder="Tìm tên đăng nhập hoặc họ tên" className="px-3 py-1.5 bg-slate-50 border border-slate-300 rounded-lg w-64" />
+            <select value={sStatus} onChange={e => setSStatus(e.target.value)} className="px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg">
+              <option value="">Mọi trạng thái</option>
+              <option value="active">Đang hoạt động</option>
+              <option value="locked">Bị khóa</option>
+            </select>
+          </div>
+          <table className="w-full text-left text-xs">
+            <thead className="text-[10px] uppercase text-slate-500 border-b border-slate-200">
+              <tr><th className="py-2 pr-3">Tài khoản Quản lý</th><th className="py-2 pr-3">Nhân sự liên kết</th><th className="py-2 pr-3">Trạng thái</th><th className="py-2 pr-3">Phạm vi hiện tại</th><th className="py-2 text-right">Thao tác</th></tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {managers.map(m => {
+                const linked = staff.find(s => s.id === m.staffId);
+                return (
+                  <tr key={m.id}>
+                    <td className="py-2.5 pr-3"><div className="font-bold">{m.name}</div><div className="font-mono text-[11px] text-slate-500">{m.username}</div></td>
+                    <td className="py-2.5 pr-3">{linked ? `${linked.code} – ${linked.name}` : 'Chưa liên kết'}</td>
+                    <td className="py-2.5 pr-3"><span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${m.isActive ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'}`}>{m.isActive ? 'Đang hoạt động' : 'Bị khóa'}</span></td>
+                    <td className="py-2.5 pr-3 font-semibold">{(m.assignedProjectIds || []).length} dự án</td>
+                    <td className="py-2.5 text-right">
+                      <button type="button" disabled={!m.isActive} title={!m.isActive ? 'Chỉ cấp phạm vi cho tài khoản Quản lý đang hoạt động.' : undefined} onClick={() => setScopeAcc(m)}
+                        className="px-3 py-1.5 rounded-lg bg-blue-50 text-blue-700 border border-blue-200 font-semibold hover:bg-blue-100 disabled:opacity-40 cursor-pointer">
+                        <FolderKanban className="w-3.5 h-3.5 inline mr-1" />Phạm vi
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          <div className="p-3 rounded-xl bg-blue-50/60 border border-blue-200 text-[11px] text-blue-900">
+            Chỉ tài khoản vai trò Quản lý có phạm vi dự án; Ban giám đốc xem toàn doanh nghiệp, Đội trưởng theo công việc được giao, Quản trị hệ thống không dùng bảng này.
           </div>
         </div>
+      )}
+
+      {/* ===== MH-20: Cấu hình hệ thống ===== */}
+      {activeTab === 'config' && (
+        <div className="bg-white rounded-2xl border border-slate-200 p-6 space-y-4 shadow-xs">
+          <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 flex items-start gap-2 text-xs">
+            <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+            <span><strong>Lưu ý:</strong> thay đổi "Thời điểm tra cứu" sẽ làm đổi kết quả cảnh báo quá hạn và sắp đến hạn của toàn hệ thống.</span>
+          </div>
+          <table className="w-full text-left text-xs">
+            <thead className="text-[10px] uppercase text-slate-500 border-b border-slate-200">
+              <tr><th className="py-2 pr-3 w-1/3">Tham số</th><th className="py-2 pr-3">Giá trị</th><th className="py-2 w-40">Cập nhật lần cuối</th></tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {([
+                ['Thời điểm tra cứu', 'THOI_DIEM_TRA_CUU', <input value={draft.queryTime} onChange={e => setDraft({ ...draft, queryTime: e.target.value })} placeholder="dd/mm/yyyy HH:mm" className={`${inputCls} font-mono`} />, 'Ngày giờ dd/mm/yyyy HH:mm hoặc để trống (dùng giờ máy chủ)'],
+                ['Số ngày tính là sắp đến hạn', 'SO_NGAY_SAP_DEN_HAN', <input type="number" value={draft.upcoming} onChange={e => setDraft({ ...draft, upcoming: e.target.value })} className={`${inputCls} font-mono`} />, 'Số nguyên 1 đến 30'],
+                ['Thời gian hết phiên (phút)', 'THOI_GIAN_HET_PHIEN_PHUT', <input type="number" value={draft.session} onChange={e => setDraft({ ...draft, session: e.target.value })} className={`${inputCls} font-mono`} />, 'Số nguyên 5 đến 240'],
+                ['Dung lượng tối đa mỗi tệp (MB)', 'DUNG_LUONG_TAI_LEN_TOI_DA_MB', <input type="number" value={draft.maxMb} onChange={e => setDraft({ ...draft, maxMb: e.target.value })} className={`${inputCls} font-mono`} />, 'Số nguyên 1 đến 500'],
+                ['Loại tệp cho phép tải lên', 'LOAI_TEP_CHO_PHEP', (
+                  <div className="flex flex-wrap gap-3 p-2 border border-slate-300 rounded-lg bg-slate-50">
+                    {Object.entries(FILE_TYPE_LABEL).map(([k, v]) => (
+                      <label key={k} className="flex items-center gap-1 cursor-pointer">
+                        <input type="checkbox" checked={draft.types.includes(k)} onChange={e => setDraft({ ...draft, types: e.target.checked ? [...draft.types, k] : draft.types.filter(x => x !== k) })} /> {v}
+                      </label>
+                    ))}
+                  </div>
+                ), 'Chọn ít nhất một loại'],
+                ['Số bản sao lưu hằng ngày được giữ', 'SO_NGAY_GIU_SAO_LUU', <input type="number" value={draft.backup} onChange={e => setDraft({ ...draft, backup: e.target.value })} className={`${inputCls} font-mono`} />, 'Số nguyên 1 đến 60']
+              ] as [string, string, React.ReactNode, string][]).map(([label, key, input, hint]) => (
+                <tr key={key}>
+                  <td className="py-3 pr-3 align-top"><div className="font-bold text-slate-800">{label}</div><div className="font-mono text-[10px] text-slate-500">{key}</div></td>
+                  <td className="py-3 pr-3">{input}<Hint>{hint}</Hint></td>
+                  <td className="py-3 font-mono text-slate-600 align-top">{formatDateTime(config.updatedAt?.[key]) || '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <ErrorBox message={typeof built === 'string' ? built : cfgErr} />
+          <div className="p-3 rounded-xl bg-blue-50/60 border border-blue-200 text-[11px] text-blue-900">
+            Mỗi lần lưu, hệ thống ghi nhật ký thao tác loại "Điều chỉnh" kèm giá trị trước và sau. Cấu hình chỉ có sáu tham số này.
+          </div>
+        </div>
+      )}
+
+      {/* ===== MH-21: Nhật ký thao tác (chỉ đọc) ===== */}
+      {activeTab === 'audit' && (
+        <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-xs">
+          <div className="px-5 py-3 bg-slate-50 border-b border-slate-200 flex flex-wrap gap-2 text-xs items-center">
+            <input type="date" value={aFrom} onChange={e => { setAFrom(e.target.value); setAPage(1); }} className="px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg font-mono" />
+            <span>–</span>
+            <input type="date" value={aTo} onChange={e => { setATo(e.target.value); setAPage(1); }} className="px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg font-mono" />
+            <select value={aUser} onChange={e => { setAUser(e.target.value); setAPage(1); }} className="px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg">
+              <option value="">Mọi người thực hiện</option>
+              {accounts.map(a => <option key={a.id} value={a.username}>{a.username}</option>)}
+              <option value="Hệ thống">Hệ thống</option>
+            </select>
+            <select value={aAction} onChange={e => { setAAction(e.target.value); setAPage(1); }} className="px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg">
+              <option value="">Mọi loại thao tác</option>
+              {Object.entries(AUDIT_ACTION_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+            </select>
+            <select value={aObject} onChange={e => { setAObject(e.target.value); setAPage(1); }} className="px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg">
+              <option value="">Mọi đối tượng</option>
+              {objectTypes.map(o => <option key={o} value={o}>{o}</option>)}
+            </select>
+          </div>
+          {auditErr && <div className="p-3"><ErrorBox message={auditErr} /></div>}
+          <table className="w-full text-left text-xs">
+            <thead className="text-[10px] uppercase text-slate-500 border-b border-slate-200 bg-white">
+              <tr><th className="p-3">Thời điểm</th><th className="p-3">Người thực hiện</th><th className="p-3">Thao tác</th><th className="p-3">Đối tượng</th><th className="p-3">Lý do</th></tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {pageRows.length === 0 && !auditErr && <tr><td colSpan={5} className="p-6 text-center text-slate-400">Không có thao tác nào theo bộ lọc đã chọn.</td></tr>}
+              {pageRows.map((log: AuditLog) => (
+                <React.Fragment key={log.id}>
+                  <tr className="hover:bg-slate-50/60 cursor-pointer" onClick={() => setExpanded(expanded === log.id ? null : log.id)}>
+                    <td className="p-3 font-mono text-slate-600">{formatDateTime(log.time)}</td>
+                    <td className="p-3 font-semibold">{log.user || 'Hệ thống'}</td>
+                    <td className="p-3">{AUDIT_ACTION_LABEL[log.action] || log.action}</td>
+                    <td className="p-3">{log.objectType} #{log.objectId}</td>
+                    <td className="p-3 text-slate-600">{log.reason || '—'}</td>
+                  </tr>
+                  {expanded === log.id && (
+                    <tr>
+                      <td colSpan={5} className="p-3 bg-slate-50">
+                        <div className="flex gap-3 flex-col sm:flex-row">
+                          {log.oldVal !== null && log.oldVal !== undefined && <JsonBlock title="Trước" value={log.oldVal} />}
+                          <JsonBlock title="Sau" value={log.newVal} compare={log.oldVal} />
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </React.Fragment>
+              ))}
+            </tbody>
+          </table>
+          <div className="px-5 pb-3"><Pagination page={aPage} pageSize={AUDIT_PAGE} total={auditRows.length} unit="bản ghi" onChange={setAPage} /></div>
+        </div>
+      )}
+
+      {/* Hộp thoại */}
+      {formAcc && (
+        <AccountFormModal account={formAcc.account} onClose={() => setFormAcc(null)}
+          onSaved={(m, tp) => { setFormAcc(null); toast.show(m); if (tp) setTempPass(tp); }} />
+      )}
+      {tempPass && <TempPasswordModal name={tempPass.name} password={tempPass.password} onClose={() => setTempPass(null)} />}
+      {resetAcc && <ResetPasswordModal account={resetAcc} onClose={() => setResetAcc(null)} onDone={(m, p) => { const n = resetAcc.name; setResetAcc(null); toast.show(m); setTempPass({ name: n, password: p }); }} />}
+      {ownPassword && <ChangeOwnPasswordModal onClose={() => setOwnPassword(false)} onDone={(m) => { setOwnPassword(false); toast.show(m); }} />}
+      {lockAcc && (
+        <ConfirmDialog
+          title={lockAcc.isActive ? 'Khóa tài khoản' : 'Mở khóa tài khoản'}
+          danger={lockAcc.isActive}
+          requireReason={lockAcc.isActive}
+          reasonLabel="Lý do khóa tài khoản"
+          message={lockAcc.isActive
+            ? <>Khóa tài khoản <strong>{lockAcc.name}</strong> ({lockAcc.username})? Mọi phiên đăng nhập bị thu hồi; liên kết nhân sự và dữ liệu lịch sử được giữ nguyên.</>
+            : <>Mở khóa tài khoản <strong>{lockAcc.name}</strong> ({lockAcc.username})?</>}
+          confirmLabel={lockAcc.isActive ? 'Xác nhận khóa' : 'Xác nhận mở khóa'}
+          onClose={() => setLockAcc(null)}
+          onConfirm={(reason) => { const r = setAccountLock(lockAcc.id, lockAcc.isActive, reason); if (!r.ok) return r.message; setLockAcc(null); toast.show(r.message); }}
+        />
+      )}
+      {scopeAcc && <ScopeDrawer account={scopeAcc} onClose={() => setScopeAcc(null)} onSaved={(m) => { setScopeAcc(null); toast.show(m); }} />}
+      {confirmQueryChange && (
+        <ConfirmDialog title="Xác nhận đổi thời điểm tra cứu"
+          message="Thay đổi Thời điểm tra cứu sẽ làm đổi kết quả cảnh báo quá hạn và sắp đến hạn của toàn hệ thống. Tiếp tục lưu?"
+          onClose={() => setConfirmQueryChange(null)}
+          onConfirm={() => { saveConfig(confirmQueryChange); setConfirmQueryChange(null); }} />
       )}
     </div>
   );

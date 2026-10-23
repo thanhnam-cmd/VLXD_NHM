@@ -242,7 +242,7 @@ export const Header: React.FC<HeaderProps> = ({
             >
               <Database className="w-3.5 h-3.5 text-blue-600 shrink-0" />
               <span className="hidden sm:inline">
-                {dbStatus?.connected ? 'PostgreSQL Live' : 'CSDL VLXD'}
+                {dbStatus?.connected ? 'PostgreSQL Live' : 'CSDL Vật tư & Dự án'}
               </span>
               <span className="sm:hidden text-[10px]">CSDL</span>
             </button>
@@ -347,18 +347,6 @@ export const Header: React.FC<HeaderProps> = ({
               </div>
             )}
           </div>
-
-          {/* Quick Logout button on Header bar */}
-          <button
-            type="button"
-            onClick={onLogout}
-            className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg text-slate-600 hover:text-red-600 bg-slate-100 hover:bg-red-50 border border-slate-200 hover:border-red-200 active:scale-95 transition-all cursor-pointer shadow-2xs"
-            title="Đăng xuất khỏi hệ thống"
-            aria-label="Đăng xuất khỏi hệ thống"
-          >
-            <LogOut className="w-4 h-4 shrink-0 pointer-events-none" />
-            <span className="hidden sm:inline text-xs font-semibold">Đăng xuất</span>
-          </button>
         </div>
       </div>
 

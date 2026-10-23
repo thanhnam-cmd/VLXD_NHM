@@ -8,7 +8,11 @@ import {
   TechDoc,
   UserAccount,
   ExternalSubcontractor,
-  SystemConfig
+  SystemConfig,
+  Category,
+  Customer,
+  ExternalAssignment,
+  AuditLog
 } from '../types/index.ts';
 
 export const SYSTEM_CONFIG: SystemConfig = {
@@ -16,7 +20,16 @@ export const SYSTEM_CONFIG: SystemConfig = {
   upcomingThresholdDays: 7,
   sessionTimeoutMinutes: 30,
   maxUploadSizeMB: 50,
-  allowedFileTypes: 'BAN_VE_CAD,PDF,ANH,BANG_TINH,NEN'
+  allowedFileTypes: 'BAN_VE_CAD,PDF,ANH,BANG_TINH,NEN',
+  backupRetentionCount: 7,
+  updatedAt: {
+    THOI_DIEM_TRA_CUU: '2026-10-12 09:00:00',
+    SO_NGAY_SAP_DEN_HAN: '2026-10-12 09:00:00',
+    THOI_GIAN_HET_PHIEN_PHUT: '2026-10-12 09:00:00',
+    DUNG_LUONG_TAI_LEN_TOI_DA_MB: '2026-10-12 09:00:00',
+    LOAI_TEP_CHO_PHEP: '2026-10-12 09:00:00',
+    SO_NGAY_GIU_SAO_LUU: '2026-10-12 09:00:00'
+  }
 };
 
 // 8 test accounts (+ 1 locked account qly.trung) from sheet TAI_KHOAN_TEST
@@ -273,9 +286,90 @@ export const INITIAL_PROJECTS: Project[] = [
 
 // 3 external subcontractor teams from sheet 15_doi_ben_ngoai
 export const INITIAL_SUBCONTRACTORS: ExternalSubcontractor[] = [
-  { id: '1', companyName: 'Đội thi công điện nhẹ Nguyên Khê', contactPerson: 'Anh Hùng', phone: '0900000301', area: 'Nguyên Khê, Đông Anh', status: 'HOP_TAC', assignedTaskCount: 2 },
-  { id: '2', companyName: 'Đội cáp quang Vân Nội', contactPerson: 'Chị Thu', phone: '0900000302', area: 'Vân Nội, Đông Anh', status: 'HOP_TAC', assignedTaskCount: 1 },
-  { id: '3', companyName: 'Công ty TNHH Lắp đặt Việt Âm', contactPerson: 'Anh Quang', phone: '0900000303', area: 'Hà Nội', status: 'NGUNG_HOP_TAC', assignedTaskCount: 0 }
+  { id: '1', companyName: 'Đội thi công điện nhẹ Nguyên Khê', taxCode: '0109876543', contactPerson: 'Anh Hùng', contactTitle: 'Chủ đội', phone: '0900000301', area: 'Nguyên Khê, Đông Anh', status: 'HOP_TAC', notes: 'Đội nhận khoán, huy động tối thiểu 4 công nhân' },
+  { id: '2', companyName: 'Đội cáp quang Vân Nội', contactPerson: 'Chị Thu', contactTitle: 'Đội trưởng', phone: '0900000302', area: 'Vân Nội, Đông Anh', status: 'HOP_TAC', notes: 'Chuyên tuyến cáp quang liên tòa' },
+  { id: '3', companyName: 'Công ty TNHH Lắp đặt Việt Âm', taxCode: '0101234567', contactPerson: 'Anh Quang', contactTitle: 'Giám đốc', phone: '0900000303', area: 'Hà Nội', status: 'NGUNG_HOP_TAC', notes: 'Ngừng hợp tác từ quý 2' }
+];
+
+// 14 hạng mục từ bảng hang_muc (mỗi dự án có danh sách hạng mục riêng)
+export const INITIAL_CATEGORIES: Category[] = [
+  { id: '1', projectId: '1', code: 'HM01', name: 'Hạ tầng mạng và truyền dẫn', systemTypeId: '1', systemTypeName: 'Hạ tầng mạng và thoại', orderNum: 1, description: 'Tuyến cáp mạng, cáp quang và tủ phân phối' },
+  { id: '2', projectId: '1', code: 'HM02', name: 'Hệ thống camera giám sát', systemTypeId: '5', systemTypeName: 'Camera giám sát', orderNum: 2, description: 'Camera hành lang, sảnh và đầu ghi hình' },
+  { id: '3', projectId: '2', code: 'HM01', name: 'Hệ thống âm thanh thông báo', systemTypeId: '3', systemTypeName: 'Hệ thống âm thanh thông báo', orderNum: 1, description: 'Loa thông báo phòng học và sân trường' },
+  { id: '4', projectId: '3', code: 'HM01', name: 'Hạ tầng mạng LAN nội bộ', systemTypeId: '1', systemTypeName: 'Hạ tầng mạng và thoại', orderNum: 1, description: 'Cáp mạng Cat6, tủ mạng và switch' },
+  { id: '5', projectId: '3', code: 'HM02', name: 'Mạng không dây WiFi', systemTypeId: '2', systemTypeName: 'Mạng không dây', orderNum: 2, description: 'Access point và controller WiFi' },
+  { id: '6', projectId: '4', code: 'HM01', name: 'Hệ thống âm thanh và hội nghị', systemTypeId: '4', systemTypeName: 'Âm thanh, hình ảnh và hội nghị trực tuyến', orderNum: 1, description: 'Loa hội trường, micro và màn hình LED' },
+  { id: '7', projectId: '5', code: 'HM01', name: 'Hệ thống camera giám sát', systemTypeId: '5', systemTypeName: 'Camera giám sát', orderNum: 1, description: 'Camera sảnh, hành lang và khuôn viên' },
+  { id: '8', projectId: '5', code: 'HM02', name: 'Kiểm soát ra vào và khóa từ', systemTypeId: '6', systemTypeName: 'Kiểm soát ra vào', orderNum: 2, description: 'Khóa thẻ từ phòng khách và barrier' },
+  { id: '9', projectId: '6', code: 'HM01', name: 'Hạ tầng cáp cấu trúc và thoại', systemTypeId: '1', systemTypeName: 'Hạ tầng mạng và thoại', orderNum: 1, description: 'Trục cáp quang và hệ thống thoại nội bộ' },
+  { id: '10', projectId: '7', code: 'HM01', name: 'Nhà thông minh căn hộ mẫu', systemTypeId: '7', systemTypeName: 'Nhà thông minh', orderNum: 1, description: 'Cảm biến, công tắc và kịch bản điều khiển' },
+  { id: '11', projectId: '8', code: 'HM01', name: 'Tuyến cáp quang liên xưởng', systemTypeId: '1', systemTypeName: 'Hạ tầng mạng và thoại', orderNum: 1, description: 'Kéo cáp quang luồn ống ngầm và treo cột' },
+  { id: '12', projectId: '9', code: 'HM01', name: 'Mạng không dây phòng học', systemTypeId: '2', systemTypeName: 'Mạng không dây', orderNum: 1, description: 'Access point các phòng học' },
+  { id: '13', projectId: '9', code: 'HM02', name: 'Camera an ninh mầm non', systemTypeId: '5', systemTypeName: 'Camera giám sát', orderNum: 2, description: 'Camera lớp học và khuôn viên sân chơi' },
+  { id: '14', projectId: '10', code: 'HM01', name: 'Âm thanh phòng họp trực tuyến', systemTypeId: '4', systemTypeName: 'Âm thanh, hình ảnh và hội nghị trực tuyến', orderNum: 1, description: 'Hệ thống micro, loa thanh và camera họp' }
+];
+
+// 10 khách hàng từ bảng khach_hang
+export const INITIAL_CUSTOMERS: Customer[] = [
+  { id: '1', code: 'KH001', name: 'Ban quản lý tòa chung cư HH Xanh', contactPerson: 'Lê Văn Phúc', phone: '0900000201', email: 'kh001@example.com', address: 'Đông Anh, Hà Nội' },
+  { id: '2', code: 'KH002', name: 'Trường THCS Ánh Dương', contactPerson: 'Trần Thị Mai', phone: '0900000202', email: 'kh002@example.com', address: 'Hà Đông, Hà Nội' },
+  { id: '3', code: 'KH003', name: 'Công ty CP Sản xuất An Bình', contactPerson: 'Nguyễn Hữu Thành', phone: '0900000203', email: 'kh003@example.com', address: 'Long Biên, Hà Nội' },
+  { id: '4', code: 'KH004', name: 'Trung tâm Hội nghị Sao Mai', contactPerson: 'Phạm Quang Vinh', phone: '0900000204', email: 'kh004@example.com', address: 'Cầu Giấy, Hà Nội' },
+  { id: '5', code: 'KH005', name: 'Khách sạn Hồ Tây View', contactPerson: 'Đỗ Thị Hương', phone: '0900000205', email: 'kh005@example.com', address: 'Tây Hồ, Hà Nội' },
+  { id: '6', code: 'KH006', name: 'Công ty TNHH Tòa nhà Minh Phát', contactPerson: 'Vũ Đình Khoa', phone: '0900000206', email: 'kh006@example.com', address: 'Cầu Giấy, Hà Nội' },
+  { id: '7', code: 'KH007', name: 'Công ty CP Địa ốc Green Park', contactPerson: 'Hoàng Thu Thủy', phone: '0900000207', email: 'kh007@example.com', address: 'Thanh Xuân, Hà Nội' },
+  { id: '8', code: 'KH008', name: 'Công ty TNHH Cơ khí Quang Minh', contactPerson: 'Bùi Văn Tiến', phone: '0900000208', email: 'kh008@example.com', address: 'Mê Linh, Hà Nội' },
+  { id: '9', code: 'KH009', name: 'Trường Mầm non Sao Nhi', contactPerson: 'Nguyễn Thị Lan', phone: '0900000209', email: 'kh009@example.com', address: 'Hoàng Mai, Hà Nội' },
+  { id: '10', code: 'KH010', name: 'Công ty TNHH Bình Minh Logistics', contactPerson: 'Lê Minh Quân', phone: '0900000210', email: 'kh010@example.com', address: 'Long Biên, Hà Nội' }
+];
+
+// 3 phần việc giao đội ngoài từ bảng phan_cong_ben_ngoai, kèm nhân sự triển khai theo ngày
+export const INITIAL_EXTERNAL_ASSIGNMENTS: ExternalAssignment[] = [
+  {
+    id: '1', taskId: '25', projectId: '5', contractorId: '1', contractorName: 'Đội thi công điện nhẹ Nguyên Khê',
+    workDescription: 'Kéo cáp tín hiệu kiểm soát ra vào nhà A1 (khoảng 600 m cáp, đi ống luồn)',
+    startDate: '2026-10-02 08:00:00', dueDate: '2026-10-15 17:00:00', workerCount: 4, contractValue: 38500000,
+    nmhCoordinatorId: '3', status: 'HIEU_LUC', notes: 'Đội trưởng Phạm Văn Cường phối hợp và giám sát',
+    dailyStaffing: [
+      { date: '2026-10-02', presentCount: 4, names: 'Nguyễn Văn An, Trần Văn Bình, Lê Văn Cảnh, Phạm Văn Dũng', content: 'Khảo sát tuyến, đi ống luồn tầng 1', updatedBy: 'Phạm Văn Cường', updatedAt: '2026-10-02 17:30:00' },
+      { date: '2026-10-03', presentCount: 4, content: 'Đi ống luồn tầng 2-3', updatedBy: 'Phạm Văn Cường', updatedAt: '2026-10-03 17:20:00' },
+      { date: '2026-10-05', presentCount: 3, content: 'Kéo cáp tín hiệu tầng 1-2', updatedBy: 'Phạm Văn Cường', updatedAt: '2026-10-05 17:10:00' },
+      { date: '2026-10-06', presentCount: 4, content: 'Kéo cáp tín hiệu tầng 3', updatedBy: 'Trần Quốc Bảo', updatedAt: '2026-10-06 17:40:00' },
+      { date: '2026-10-07', presentCount: 0, content: 'Nghỉ do mưa lớn', updatedBy: 'Phạm Văn Cường', updatedAt: '2026-10-07 08:30:00' },
+      { date: '2026-10-08', presentCount: 4, content: 'Kéo cáp tầng 4, đánh dấu đầu cáp', updatedBy: 'Phạm Văn Cường', updatedAt: '2026-10-08 17:15:00' },
+      { date: '2026-10-09', presentCount: 4, content: 'Kéo cáp tầng 5', updatedBy: 'Phạm Văn Cường', updatedAt: '2026-10-09 17:25:00' }
+    ]
+  },
+  {
+    id: '2', taskId: '22', projectId: '5', contractorId: '2', contractorName: 'Đội cáp quang Vân Nội',
+    workDescription: 'Kéo cáp và lắp camera bãi xe, tầng hầm',
+    startDate: '2026-10-13 08:00:00', dueDate: '2026-10-24 17:00:00', workerCount: 3,
+    nmhCoordinatorId: '4', status: 'HIEU_LUC', notes: 'Đội trưởng Nguyễn Đức Thắng phối hợp', dailyStaffing: []
+  },
+  {
+    id: '3', taskId: '38', projectId: '9', contractorId: '1', contractorName: 'Đội thi công điện nhẹ Nguyên Khê',
+    workDescription: 'Kéo cáp camera sân trường',
+    startDate: '2026-10-12 08:00:00', dueDate: '2026-10-27 17:00:00', workerCount: 4,
+    nmhCoordinatorId: '4', status: 'HUY', notes: 'Chủ đầu tư tạm hoãn gói sân trường',
+    cancelReason: 'Dự án NMH-2026-009 bị hủy', cancelledAt: '2026-10-09 16:00:00', dailyStaffing: []
+  }
+];
+
+// Nhật ký thao tác mẫu từ bảng nhat_ky_thao_tac
+export const INITIAL_AUDIT_LOGS: AuditLog[] = [
+  { id: '14', time: '2026-10-11 15:00:00', user: 'qly.bao', action: 'TAI_LEN', objectType: 'Phiên bản hồ sơ', objectId: '28', newVal: { tep: 'ban-ve-kiem-soat-ra-vao-revB.dwg', nhan: 'Rev B' } },
+  { id: '13', time: '2026-10-11 14:00:00', user: 'qly.bao', action: 'CHON_BAN_TRIEN_KHAI', objectType: 'Phiên bản hồ sơ', objectId: '28', reason: 'Chọn Rev B (ảnh) để Đội trưởng xem tại công trường', oldVal: { duoc_chon: 0 }, newVal: { duoc_chon: 1 } },
+  { id: '12', time: '2026-10-11 11:00:00', user: 'qly.bao', action: 'TAO_MOI', objectType: 'Lịch nghỉ/bận', objectId: '8', reason: 'Ghi nhận nghỉ/bận; 1 phân công bị ảnh hưởng', newVal: { nhan_su: 'Lý Thành Công', tu: '2026-10-14 08:00', den: '2026-10-15 17:00' } },
+  { id: '11', time: '2026-10-11 10:00:00', user: 'qly.bao', action: 'DIEU_CHINH', objectType: 'Phân công', objectId: '33', reason: 'Kéo dài do cấu hình firewall', oldVal: { ket_thuc: '2026-10-14 17:00' }, newVal: { ket_thuc: '2026-10-16 17:00' } },
+  { id: '10', time: '2026-10-10 11:00:00', user: 'qly.bao', action: 'HUY', objectType: 'Lịch nghỉ/bận', objectId: '5', reason: 'Nhân sự rút đơn xin nghỉ', oldVal: { trang_thai: 'HIEU_LUC' }, newVal: { trang_thai: 'HUY' } },
+  { id: '9', time: '2026-10-10 10:00:00', user: 'qly.nhung', action: 'DOI_TRANG_THAI', objectType: 'Dự án', objectId: '6', reason: 'Khách hàng chậm thanh toán đợt 2', oldVal: { trang_thai: 'DANG_THUC_HIEN' }, newVal: { trang_thai: 'TAM_DUNG' } },
+  { id: '8', time: '2026-10-09 16:00:00', user: 'qly.bao', action: 'HUY', objectType: 'Dự án', objectId: '9', reason: 'Khách hàng dừng đầu tư; thỏa thuận chấm dứt thi công', oldVal: { trang_thai: 'DANG_THUC_HIEN' }, newVal: { trang_thai: 'HUY' } },
+  { id: '7', time: '2026-10-08 10:00:00', user: 'qly.nhung', action: 'XAC_NHAN_HOAN_THANH', objectType: 'Công việc', objectId: '41', reason: 'Hoàn thành sớm', oldVal: { trang_thai: 'DANG_THUC_HIEN' }, newVal: { trang_thai: 'HOAN_THANH' } },
+  { id: '6', time: '2026-10-08 10:00:00', user: 'qly.nhung', action: 'KET_THUC_SOM', objectType: 'Phân công', objectId: '86', reason: 'G2: kết thúc khoảng đang diễn ra tại thời điểm xác nhận', oldVal: { ket_thuc: '2026-10-10 17:00' }, newVal: { ket_thuc: '2026-10-08 10:00' } },
+  { id: '5', time: '2026-10-08 10:00:00', user: 'qly.nhung', action: 'HUY', objectType: 'Phân công', objectId: '88', reason: 'G2: phân công bắt đầu sau thời điểm xác nhận', oldVal: { trang_thai: 'HIEU_LUC' }, newVal: { trang_thai: 'HUY' } },
+  { id: '4', time: '2026-09-21 09:00:00', user: 'qly.bao', action: 'TAO_MOI', objectType: 'Dự án', objectId: '5', newVal: { ma_du_an: 'NMH-2026-005', trang_thai: 'LAP_KE_HOACH' } },
+  { id: '3', time: '2026-08-28 09:00:00', user: 'admin', action: 'KHOA', objectType: 'Tài khoản', objectId: '9', reason: 'Nghỉ việc; khóa theo quy trình bàn giao', oldVal: { trang_thai: 'HOAT_DONG' }, newVal: { trang_thai: 'BI_KHOA' } },
+  { id: '2', time: '2026-06-10 09:00:00', user: 'qly.bao', action: 'TAO_MOI', objectType: 'Dự án', objectId: '1', newVal: { ma_du_an: 'NMH-2026-001', trang_thai: 'LAP_KE_HOACH' } }
 ];
 
 // 42 tasks from sheet 12_cong_viec
