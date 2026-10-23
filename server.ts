@@ -122,9 +122,26 @@ app.post('/api/database/init', async (req, res) => {
 
     const sqlContent = fs.readFileSync(sqlFilePath, 'utf-8');
     const client = await pool.connect();
-    
+
     console.log('[PostgreSQL] Executing nmh_postgres_full.sql...');
-    await client.query(sqlContent);
+    // Chạy trong một giao dịch: lỗi ở bất kỳ câu lệnh nào thì không thay đổi gì
+    try {
+      await client.query('BEGIN');
+      await client.query(sqlContent);
+      await client.query('COMMIT');
+    } catch (err: any) {
+      await client.query('ROLLBACK').catch(() => {});
+      // Kèm định nghĩa ràng buộc bị vi phạm để thấy ngay nguyên nhân
+      if (err.constraint) {
+        const def = await client.query(
+          `SELECT conrelid::regclass::text AS bang, pg_get_constraintdef(oid) AS dinh_nghia FROM pg_constraint WHERE conname = $1`,
+          [err.constraint]
+        ).catch(() => ({ rows: [] as any[] }));
+        err.message = `${err.message}${def.rows[0] ? ` | ${def.rows[0].bang}: ${def.rows[0].dinh_nghia}` : ''}`;
+      }
+      client.release();
+      throw err;
+    }
     client.release();
 
     await ensureSchemaExtensions(pool);
