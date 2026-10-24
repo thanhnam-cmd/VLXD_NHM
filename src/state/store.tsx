@@ -405,10 +405,18 @@ const useStoreState = () => {
     const outside = tasks.filter(t => t.projectId === id && t.status !== 'HUY' && (toTime(t.startDate) < toTime(start) || toTime(t.dueDate) > toTime(end)));
     if (outside.length > 0) return fail(`Còn công việc nằm ngoài thời gian mới của dự án (${outside.map(t => t.code).join(', ')}). Hãy điều chỉnh công việc trước.`);
     setProjects(prev => prev.map(p => p.id === id ? { ...p, ...data, code: p.code } : p));
+    const teamText = (list?: { contractorId: string; workerCount: number }[]) =>
+      (list || []).map(x => `${subcontractors.find(c => c.id === x.contractorId)?.companyName || x.contractorId} (${x.workerCount} người)`).join('; ') || null;
     logAudit('DIEU_CHINH', 'Dự án', id, undefined,
-      { ten: old.name, dia_diem: old.place, bat_dau: old.startDate, ket_thuc: old.dueDate, khach_hang: old.clientName, phu_trach: old.managerName },
-      { ten: data.name ?? old.name, dia_diem: data.place ?? old.place, bat_dau: start, ket_thuc: end, khach_hang: data.clientName ?? old.clientName, phu_trach: data.managerName ?? old.managerName });
+      { ten: old.name, dia_diem: old.place, bat_dau: old.startDate, ket_thuc: old.dueDate, khach_hang: old.clientName, phu_trach: old.managerName, doi_khoan_ngoai: teamText(old.externalTeams) },
+      { ten: data.name ?? old.name, dia_diem: data.place ?? old.place, bat_dau: start, ket_thuc: end, khach_hang: data.clientName ?? old.clientName, phu_trach: data.managerName ?? old.managerName, doi_khoan_ngoai: teamText(data.externalTeams ?? old.externalTeams) });
     return ok(`Đã lưu thay đổi dự án ${old.code}.`);
+  };
+
+  const markPasswordChanged = () => {
+    setAccounts(prev => prev.map(a => a.id === currentUser.id ? { ...a, mustChangePassword: false } : a));
+    setCurrentUserState(u => ({ ...u, mustChangePassword: false }));
+    logAudit('DIEU_CHINH', 'Tài khoản', currentUser.id, 'Tự đổi mật khẩu', null, { doi_mat_khau: true });
   };
 
   const changeProjectStatus = (id: string, next: ProjectStatus, reason?: string): OpResult => {
@@ -719,6 +727,11 @@ const useStoreState = () => {
     }
     const created: ExternalAssignment = { ...data, id: newId(), contractorName: c.companyName, status: 'HIEU_LUC', dailyStaffing: [] };
     setExternalAssignments(prev => [created, ...prev]);
+    // Đồng bộ: đội được giao việc mà chưa gắn vào dự án thì tự gắn kèm số người khoán
+    const proj = projects.find(p => p.id === data.projectId);
+    if (proj && !(proj.externalTeams || []).some(x => x.contractorId === c.id)) {
+      setProjects(prev => prev.map(p => p.id === proj.id ? { ...p, externalTeams: [...(p.externalTeams || []), { contractorId: c.id, workerCount: data.workerCount || 1 }] } : p));
+    }
     logAudit('TAO_MOI', 'Phần việc giao ngoài', created.id, undefined, null, { don_vi: c.companyName, cong_viec: t.code });
     return ok('Đã lưu phần việc giao.');
   };
@@ -1046,7 +1059,7 @@ const useStoreState = () => {
     addWorkLog, approveWorkLog,
     uploadDocs, addDocVersion, selectDocVersion, updateDocInfo,
     saveStaff,
-    createAccount, updateAccount, resetPassword, setAccountLock, updateAccountScope, recordLogin,
+    createAccount, updateAccount, resetPassword, setAccountLock, updateAccountScope, recordLogin, markPasswordChanged,
     saveConfig
   };
 };

@@ -182,6 +182,17 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
               Khách hàng: <strong>{customer?.name || project.clientName}</strong>
               {customer && <span> · Đầu mối: {customer.contactPerson || '—'} · {customer.phone || '—'}</span>}
             </div>
+            {(project.externalTeams || []).length > 0 && (
+              <div className="flex items-center gap-1.5 text-xs text-slate-500 mt-1 flex-wrap">
+                <Building2 className="w-3.5 h-3.5 text-purple-500" />
+                Đội khoán ngoài:
+                {(project.externalTeams || []).map(x => (
+                  <span key={x.contractorId} className="px-2 py-0.5 rounded-full bg-purple-50 border border-purple-200 text-purple-800 font-semibold">
+                    {store.subcontractors.find(c => c.id === x.contractorId)?.companyName || 'Đội đã xóa'} · {x.workerCount} người
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
 
           <div className="flex items-center gap-3 bg-[#F8FAFC] p-3 rounded-xl border border-slate-200">

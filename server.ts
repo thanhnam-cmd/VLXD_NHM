@@ -314,7 +314,7 @@ app.post('/api/auth/change-password', async (req, res) => {
   if (!currentPassword || !newPassword) {
     return res.status(400).json({ success: false, message: 'Vui lòng cung cấp mật khẩu hiện tại và mật khẩu mới.' });
   }
-  if (newPassword.length < 8) {
+  if (!/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).{8,}$/.test(newPassword)) {
     return res.status(400).json({ success: false, message: 'Mật khẩu mới phải có tối thiểu 8 ký tự, gồm chữ hoa, chữ thường và chữ số.' });
   }
   if (currentPassword === newPassword) {

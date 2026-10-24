@@ -93,6 +93,26 @@ export async function ensureSchemaExtensions(pool: pg.Pool) {
       PRIMARY KEY (phan_cong_ben_ngoai_id, ngay)
     );
   `);
+  // Đội khoán ngoài gắn với dự án + số nhân sự tham gia. Lần đầu tạo bảng thì lấy từ các phần việc đã giao ngoài.
+  const linkExists = await pool.query(`SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='du_an_doi_ben_ngoai'`);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS du_an_doi_ben_ngoai (
+      du_an_id INT NOT NULL REFERENCES du_an(id),
+      doi_ben_ngoai_id INT NOT NULL REFERENCES doi_ben_ngoai(id),
+      so_nguoi_tham_gia INT NOT NULL CHECK (so_nguoi_tham_gia BETWEEN 1 AND 200),
+      thoi_diem_cap_nhat TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (du_an_id, doi_ben_ngoai_id)
+    );
+  `);
+  if (linkExists.rowCount === 0) {
+    await pool.query(`
+      INSERT INTO du_an_doi_ben_ngoai (du_an_id, doi_ben_ngoai_id, so_nguoi_tham_gia)
+      SELECT cv.du_an_id, pc.doi_ben_ngoai_id, GREATEST(1, LEAST(200, MAX(COALESCE(pc.so_nguoi_du_kien, 1))))
+      FROM phan_cong_ben_ngoai pc JOIN cong_viec cv ON pc.cong_viec_id = cv.id
+      GROUP BY cv.du_an_id, pc.doi_ben_ngoai_id
+      ON CONFLICT DO NOTHING;
+    `);
+  }
   // Đồng bộ tên khóa cấu hình theo MH-20
   await pool.query(`
     UPDATE cau_hinh SET khoa_cau_hinh = 'SO_NGAY_SAP_DEN_HAN'
@@ -157,7 +177,9 @@ export async function bootstrap(pool: pg.Pool) {
       ${TS('d.ket_thuc_du_kien')} AS "dueDate", d.trang_thai AS status, d.nhan_su_phu_trach_id::text AS "managerId",
       ns.ho_ten AS "managerName", ${TS('d.thoi_diem_hoan_thanh')} AS "completedAt", xn.ten_hien_thi AS "completedBy",
       ${TS('d.thoi_diem_huy')} AS "cancelledAt", nh.ten_hien_thi AS "cancelledBy", d.ly_do_huy AS "cancelReason",
-      ${TS('d.thoi_diem_tao')} AS "createdAt"
+      ${TS('d.thoi_diem_tao')} AS "createdAt",
+      COALESCE((SELECT json_agg(json_build_object('contractorId', l.doi_ben_ngoai_id::text, 'workerCount', l.so_nguoi_tham_gia) ORDER BY l.doi_ben_ngoai_id)
+        FROM du_an_doi_ben_ngoai l WHERE l.du_an_id = d.id), '[]'::json) AS "externalTeams"
     FROM du_an d LEFT JOIN khach_hang kh ON d.khach_hang_id = kh.id LEFT JOIN nhan_su ns ON d.nhan_su_phu_trach_id = ns.id
     LEFT JOIN tai_khoan xn ON d.nguoi_xac_nhan_hoan_thanh_id = xn.id LEFT JOIN tai_khoan nh ON d.nguoi_huy_id = nh.id
     ORDER BY d.id`);
@@ -341,6 +363,17 @@ export async function syncEntity(pool: pg.Pool, entity: string, rows: Row[], act
             nhan_su_phu_trach_id: toInt(r.managerId), thoi_diem_hoan_thanh: toTs(r.completedAt), nguoi_xac_nhan_hoan_thanh_id: acc.byName(r.completedBy),
             thoi_diem_huy: toTs(r.cancelledAt), nguoi_huy_id: acc.byName(r.cancelledBy), ly_do_huy: str(r.cancelReason), thoi_diem_cap_nhat: new Date()
           }, { nguoi_tao_id: actorId });
+          if (Array.isArray(r.externalTeams)) {
+            // Danh sách đội khoán của dự án là một phần của bản ghi dự án: bỏ liên kết không còn, cập nhật/thêm liên kết còn lại
+            const links = r.externalTeams.filter((x: any) => toInt(x.contractorId));
+            await client.query(`DELETE FROM du_an_doi_ben_ngoai WHERE du_an_id = $1 AND NOT (doi_ben_ngoai_id = ANY($2::int[]))`,
+              [toInt(r.id), links.map((x: any) => toInt(x.contractorId))]);
+            for (const x of links) {
+              await upsert(client, 'du_an_doi_ben_ngoai', ['du_an_id', 'doi_ben_ngoai_id'], {
+                du_an_id: toInt(r.id), doi_ben_ngoai_id: toInt(x.contractorId), so_nguoi_tham_gia: Math.max(1, Math.min(200, toInt(x.workerCount) || 1)), thoi_diem_cap_nhat: new Date()
+              });
+            }
+          }
           break;
 
         case 'categories':

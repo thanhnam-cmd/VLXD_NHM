@@ -394,9 +394,22 @@ export const AssignmentView: React.FC<AssignmentViewProps> = ({ initialTab, init
                     <div className="grid grid-cols-3 gap-2.5">
                       <div className="col-span-2">
                         <Label required>Đội thi công ngoài</Label>
-                        <select value={extTeamId} onChange={e => setExtTeamId(e.target.value)} className={inputCls}>
+                        <select value={extTeamId} onChange={e => {
+                          setExtTeamId(e.target.value);
+                          const link = (selectedProject?.externalTeams || []).find(x => x.contractorId === e.target.value);
+                          if (link && !extCount) setExtCount(String(link.workerCount));
+                        }} className={inputCls}>
                           <option value="">-- Chọn đội thi công --</option>
-                          {subcontractors.filter(x => x.status === 'HOP_TAC').map(x => <option key={x.id} value={x.id}>{x.companyName}</option>)}
+                          {(selectedProject?.externalTeams || []).length > 0 && (
+                            <optgroup label="Đội khoán đã gắn với dự án">
+                              {(selectedProject?.externalTeams || []).map(l => subcontractors.find(x => x.id === l.contractorId && x.status === 'HOP_TAC')).filter(Boolean).map(x => (
+                                <option key={x!.id} value={x!.id}>{x!.companyName} ({selectedProject!.externalTeams!.find(l => l.contractorId === x!.id)!.workerCount} người)</option>
+                              ))}
+                            </optgroup>
+                          )}
+                          <optgroup label="Đội thi công ngoài khác">
+                            {subcontractors.filter(x => x.status === 'HOP_TAC' && !(selectedProject?.externalTeams || []).some(l => l.contractorId === x.id)).map(x => <option key={x.id} value={x.id}>{x.companyName}</option>)}
+                          </optgroup>
                         </select>
                       </div>
                       <div>

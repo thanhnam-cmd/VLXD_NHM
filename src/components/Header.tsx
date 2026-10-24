@@ -23,6 +23,8 @@ import { DatabaseStatus, dbService } from '../services/db.ts';
 import { DEMO_QUERY_TIME } from '../utils/progressCalculator.ts';
 import { useStore } from '../state/store.tsx';
 import { formatDateTime } from '../utils/domain.ts';
+import { ChangePasswordModal } from './ChangePasswordModal.tsx';
+import { useToast } from './ui.tsx';
 
 interface HeaderProps {
   currentUser: UserAccount;
@@ -50,12 +52,9 @@ export const Header: React.FC<HeaderProps> = ({
 }) => {
   const { config } = useStore();
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
-  const [isChangePasswordOpen, setIsChangePasswordOpen] = useState(false);
-  const [currentPw, setCurrentPw] = useState('');
-  const [newPw, setNewPw] = useState('');
-  const [confirmPw, setConfirmPw] = useState('');
-  const [pwError, setPwError] = useState<string | null>(null);
-  const [pwSuccess, setPwSuccess] = useState<string | null>(null);
+  // Mật khẩu tạm do Quản trị viên cấp: tự mở hộp thoại đổi mật khẩu khi đăng nhập
+  const [isChangePasswordOpen, setIsChangePasswordOpen] = useState(!!currentUser.mustChangePassword);
+  const toast = useToast();
 
   const roleBadges: Record<string, { label: string; icon: React.ReactNode; color: string; bgBadge: string }> = {
     admin: { 
@@ -111,48 +110,8 @@ export const Header: React.FC<HeaderProps> = ({
   const currentBadge = roleBadges[currentUser.role] || roleBadges.QUAN_LY;
   const isDirector = currentUser.role === 'director' || currentUser.role === 'BAN_GIAM_DOC';
 
-  const handleChangePassword = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setPwError(null);
-    setPwSuccess(null);
-
-    if (newPw.length < 8) {
-      setPwError('Mật khẩu mới phải có tối thiểu 8 ký tự, gồm chữ hoa, chữ thường và chữ số.');
-      return;
-    }
-    if (newPw === currentPw) {
-      setPwError('Mật khẩu mới phải khác mật khẩu hiện tại.');
-      return;
-    }
-    if (newPw !== confirmPw) {
-      setPwError('Hai lần nhập mật khẩu mới chưa khớp.');
-      return;
-    }
-
-    try {
-      const res = await dbService.changePassword(currentPw, newPw, currentUser.id);
-      if (res.success) {
-        setPwSuccess('Đã đổi mật khẩu thành công!');
-        setTimeout(() => {
-          setIsChangePasswordOpen(false);
-          setPwSuccess(null);
-          setCurrentPw('');
-          setNewPw('');
-          setConfirmPw('');
-        }, 1500);
-      } else {
-        setPwError(res.message || 'Mật khẩu hiện tại không đúng.');
-      }
-    } catch {
-      setPwSuccess('Đã đổi mật khẩu thành công!');
-      setTimeout(() => {
-        setIsChangePasswordOpen(false);
-        setPwSuccess(null);
-      }, 1500);
-    }
-  };
-
   return (
+    <>
     <header className="print:hidden sticky top-0 z-30 bg-white/95 backdrop-blur-md border-b border-slate-200 px-3 sm:px-6 py-2 shadow-xs transition-all">
       <div className="max-w-[1700px] mx-auto flex items-center justify-between gap-3 sm:gap-4">
         {/* Left Section: Company Brand Logo & Subtitle */}
@@ -355,100 +314,12 @@ export const Header: React.FC<HeaderProps> = ({
         </div>
       </div>
 
-      {/* Change Password Modal (AUTH-02 Specification) */}
-      {isChangePasswordOpen && (
-        <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-200 space-y-4">
-            <div className="flex items-center justify-between border-b pb-3">
-              <div className="flex items-center gap-2 font-bold text-slate-900 text-sm">
-                <KeyRound className="w-4 h-4 text-[#152A55]" />
-                <span>Đổi Mật Khẩu (AUTH-02)</span>
-              </div>
-              <button 
-                type="button" 
-                onClick={() => setIsChangePasswordOpen(false)}
-                className="text-slate-400 hover:text-slate-600 cursor-pointer"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            {pwError && (
-              <div className="p-2.5 bg-red-50 border border-red-200 rounded-lg text-red-700 text-xs flex items-center gap-2">
-                <X className="w-3.5 h-3.5 text-red-600 shrink-0" />
-                <span>{pwError}</span>
-              </div>
-            )}
-
-            {pwSuccess && (
-              <div className="p-2.5 bg-emerald-50 border border-emerald-200 rounded-lg text-emerald-800 text-xs flex items-center gap-2">
-                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                <span>{pwSuccess}</span>
-              </div>
-            )}
-
-            <form onSubmit={handleChangePassword} className="space-y-3 text-xs">
-              <div>
-                <label className="block text-slate-700 font-semibold mb-1">Mật khẩu hiện tại</label>
-                <input
-                  type="password"
-                  required
-                  value={currentPw}
-                  onChange={(e) => setCurrentPw(e.target.value)}
-                  placeholder="Nhập mật khẩu đang dùng (mặc định: Nmh@2026)"
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg focus:ring-2 focus:ring-[#152A55] focus:bg-white focus:outline-none"
-                />
-              </div>
-
-              <div>
-                <label className="block text-slate-700 font-semibold mb-1">Mật khẩu mới</label>
-                <input
-                  type="password"
-                  required
-                  value={newPw}
-                  onChange={(e) => setNewPw(e.target.value)}
-                  placeholder="Tối thiểu 8 ký tự, có chữ hoa, thường và số"
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg focus:ring-2 focus:ring-[#152A55] focus:bg-white focus:outline-none"
-                />
-              </div>
-
-              <div>
-                <label className="block text-slate-700 font-semibold mb-1">Nhập lại mật khẩu mới</label>
-                <input
-                  type="password"
-                  required
-                  value={confirmPw}
-                  onChange={(e) => setConfirmPw(e.target.value)}
-                  placeholder="Nhập lại chính xác mật khẩu mới"
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg focus:ring-2 focus:ring-[#152A55] focus:bg-white focus:outline-none"
-                />
-              </div>
-
-              <div className="p-2.5 bg-slate-50 rounded-lg border border-slate-200 text-[11px] text-slate-500 space-y-0.5">
-                <div>• Tối thiểu 8 ký tự.</div>
-                <div>• Chứa chữ hoa (A-Z), chữ thường (a-z) và chữ số (0-9).</div>
-                <div>• Khác với mật khẩu hiện tại.</div>
-              </div>
-
-              <div className="flex items-center justify-end gap-2 pt-2 border-t">
-                <button
-                  type="button"
-                  onClick={() => setIsChangePasswordOpen(false)}
-                  className="px-3 py-2 rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-50"
-                >
-                  Hủy
-                </button>
-                <button
-                  type="submit"
-                  className="px-4 py-2 rounded-lg bg-[#152A55] text-white font-semibold hover:bg-[#1E3A75]"
-                >
-                  Lưu thay đổi
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
     </header>
+    {isChangePasswordOpen && (
+      <ChangePasswordModal forced={!!currentUser.mustChangePassword} onClose={() => setIsChangePasswordOpen(false)}
+        onDone={(m) => { setIsChangePasswordOpen(false); toast.show(m); }} />
+    )}
+    {toast.node}
+    </>
   );
 };

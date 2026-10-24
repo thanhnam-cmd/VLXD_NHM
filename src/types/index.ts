@@ -110,6 +110,12 @@ export type ProjectStatus =
   | 'completed' 
   | 'cancelled';
 
+/** Đội khoán ngoài gắn với dự án và số nhân sự tham gia */
+export interface ProjectExternalTeam {
+  contractorId: string;
+  workerCount: number;
+}
+
 export interface Project {
   id: string; // "1", "2"...
   code: string; // "NMH-2026-001"
@@ -131,6 +137,7 @@ export interface Project {
   cancelledBy?: string;
   cancelReason?: string;
   createdAt?: string;
+  externalTeams?: ProjectExternalTeam[]; // du_an_doi_ben_ngoai
 }
 
 export interface Category {

@@ -330,10 +330,7 @@ export const dbService = {
       });
       return await res.json();
     } catch {
-      if (newPassword.length < 8) {
-        return { success: false, message: 'Mật khẩu mới phải có tối thiểu 8 ký tự, gồm chữ hoa, chữ thường và chữ số.' };
-      }
-      return { success: true, message: 'Đã đổi mật khẩu thành công.' };
+      return { success: false, message: 'Không kết nối được máy chủ, mật khẩu chưa được đổi. Vui lòng thử lại.' };
     }
   },
 

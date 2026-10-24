@@ -884,3 +884,10 @@ export const INITIAL_WORK_LOGS: WorkLog[] = [
     statusVerifiedByManager: true
   }
 ];
+
+// Đội khoán ngoài của từng dự án: lấy từ các phần việc đã giao ngoài (số người = số người khoán lớn nhất)
+INITIAL_PROJECTS.forEach(p => {
+  const map = new Map<string, number>();
+  INITIAL_EXTERNAL_ASSIGNMENTS.filter(e => e.projectId === p.id).forEach(e => map.set(e.contractorId, Math.max(map.get(e.contractorId) || 0, e.workerCount || 1)));
+  if (map.size) p.externalTeams = [...map].map(([contractorId, workerCount]) => ({ contractorId, workerCount }));
+});

@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
-import type { Project, Customer, ProjectStatus } from '../types/index.ts';
+import type { Project, Customer, ProjectStatus, ProjectExternalTeam } from '../types/index.ts';
+import { Plus, Trash2, Building2 } from 'lucide-react';
 import { useStore } from '../state/store.tsx';
 import { Modal, Label, Hint, ErrorBox, inputCls, btnPrimary, btnSecondary, btnDanger } from './ui.tsx';
 import { PROJECT_STATUS_LABEL, EMAIL_RE, PHONE_RE, nextCode, toDbDateTime, toTime, formatDate } from '../utils/domain.ts';
@@ -85,7 +86,7 @@ export const CustomerModal: React.FC<{ customer?: Customer; onClose: () => void;
 
 /** Biểu mẫu Tạo và Sửa dự án (MH-02, Hình 3.17) */
 export const ProjectFormModal: React.FC<{ project?: Project; onClose: () => void; onSaved: (p: Project) => void }> = ({ project, onClose, onSaved }) => {
-  const { projects, customers, staff, createProject, updateProject } = useStore();
+  const { projects, customers, staff, subcontractors, createProject, updateProject } = useStore();
   const isEdit = !!project;
   const year = DEMO_QUERY_TIME.slice(0, 4);
   const [code, setCode] = useState(project?.code || nextCode(projects.map(p => p.code), `NMH-${year}-`, 3));
@@ -99,6 +100,10 @@ export const ProjectFormModal: React.FC<{ project?: Project; onClose: () => void
   const [managerId, setManagerId] = useState(project?.managerId || '');
   const [isCustomerOpen, setIsCustomerOpen] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  // Đội khoán ngoài (nếu có): mỗi dòng một đội + số nhân sự tham gia
+  const [extTeams, setExtTeams] = useState<{ contractorId: string; workerCount: string }[]>(
+    (project?.externalTeams || []).map(x => ({ contractorId: x.contractorId, workerCount: String(x.workerCount) })));
+  const setExt = (i: number, k: 'contractorId' | 'workerCount', v: string) => setExtTeams(prev => prev.map((x, j) => j === i ? { ...x, [k]: v } : x));
 
   const managers = staff.filter(s => s.roleTitle === 'QUAN_LY' && s.isActive);
   const filteredCustomers = useMemo(() => {
@@ -116,6 +121,11 @@ export const ProjectFormModal: React.FC<{ project?: Project; onClose: () => void
     if (!isEdit && startDate < DEMO_QUERY_TIME.slice(0, 10)) return setErr('Ngày không được trước ngày hiện tại. Vui lòng kiểm tra lại.');
     if (dueDate < startDate) return setErr('Ngày kết thúc không được trước ngày bắt đầu.');
     if (!managerId) return setErr('Vui lòng chọn người phụ trách dự án.');
+    const teamRows = extTeams.filter(x => x.contractorId || x.workerCount);
+    if (teamRows.some(x => !x.contractorId)) return setErr('Vui lòng chọn đội khoán ngoài cho từng dòng (hoặc xóa dòng trống).');
+    if (teamRows.some(x => !/^\d+$/.test(x.workerCount) || +x.workerCount < 1 || +x.workerCount > 200)) return setErr('Số nhân sự tham gia của đội khoán ngoài phải từ 1 đến 200.');
+    if (new Set(teamRows.map(x => x.contractorId)).size !== teamRows.length) return setErr('Mỗi đội khoán ngoài chỉ được gắn một lần trong dự án.');
+    const externalTeams: ProjectExternalTeam[] = teamRows.map(x => ({ contractorId: x.contractorId, workerCount: +x.workerCount }));
     const mgr = staff.find(s => s.id === managerId);
     const data = {
       code: code.trim(),
@@ -128,7 +138,8 @@ export const ProjectFormModal: React.FC<{ project?: Project; onClose: () => void
       startDate: toDbDateTime(startDate, '08:00:00'),
       dueDate: toDbDateTime(dueDate, '17:00:00'),
       managerId,
-      managerName: mgr?.name
+      managerName: mgr?.name,
+      externalTeams
     };
     if (isEdit) {
       const r = updateProject(project!.id, data);
@@ -208,6 +219,43 @@ export const ProjectFormModal: React.FC<{ project?: Project; onClose: () => void
             <input type="date" value={dueDate} onChange={e => setDueDate(e.target.value)} className={`${inputCls} font-mono`} />
             <Hint>dd/mm/yyyy · giờ mặc định 17:00</Hint>
           </div>
+        </div>
+        <div className={`rounded-xl border p-3 space-y-2 ${extTeams.length ? 'border-purple-200 bg-purple-50/40' : 'border-slate-200'}`}>
+          <div className="flex items-center justify-between gap-2">
+            <label className="flex items-center gap-1.5 text-slate-700 font-semibold"><Building2 className="w-4 h-4 text-purple-600" /> Đội khoán ngoài (nếu có)</label>
+            <button type="button" onClick={() => setExtTeams(prev => [...prev, { contractorId: '', workerCount: '' }])} className="text-[11px] text-blue-700 hover:underline font-semibold cursor-pointer flex items-center gap-0.5">
+              <Plus className="w-3.5 h-3.5" /> Gắn đội khoán ngoài
+            </button>
+          </div>
+          {extTeams.length === 0 ? (
+            <Hint>Dự án chưa gắn đội khoán ngoài. Bấm "Gắn đội khoán ngoài" để chọn đội và số nhân sự tham gia.</Hint>
+          ) : (
+            <>
+              <div className="grid grid-cols-12 gap-2 text-[10px] font-semibold text-slate-500">
+                <div className="col-span-8">Đội khoán ngoài <span className="text-red-500">(*)</span></div>
+                <div className="col-span-3">Số nhân sự tham gia <span className="text-red-500">(*)</span></div>
+              </div>
+              {extTeams.map((x, i) => (
+                <div key={i} className="grid grid-cols-12 gap-2 items-center">
+                  <select value={x.contractorId} onChange={e => setExt(i, 'contractorId', e.target.value)} className={`${inputCls} col-span-8`}>
+                    <option value="">-- Chọn đội khoán ngoài --</option>
+                    {subcontractors
+                      .filter(c => c.status === 'HOP_TAC' || c.id === x.contractorId)
+                      .filter(c => c.id === x.contractorId || !extTeams.some(o => o.contractorId === c.id))
+                      .map(c => <option key={c.id} value={c.id}>{c.companyName}{c.area ? ` – ${c.area}` : ''}{c.status !== 'HOP_TAC' ? ' (ngừng hợp tác)' : ''}</option>)}
+                  </select>
+                  <div className="col-span-3 relative">
+                    <input type="number" min={1} max={200} value={x.workerCount} onChange={e => setExt(i, 'workerCount', e.target.value)} placeholder="VD: 4" className={`${inputCls} font-mono pr-10`} />
+                    <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[10px] text-slate-400">người</span>
+                  </div>
+                  <button type="button" title="Bỏ đội này" onClick={() => setExtTeams(prev => prev.filter((_, j) => j !== i))} className="col-span-1 p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg cursor-pointer justify-self-center">
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
+              ))}
+              <Hint>Tổng nhân sự đội ngoài: <strong>{extTeams.reduce((t, x) => t + (+x.workerCount || 0), 0)} người</strong>. Danh sách đội lấy từ Danh mục đội thi công ngoài.</Hint>
+            </>
+          )}
         </div>
         <ErrorBox message={err} />
       </Modal>

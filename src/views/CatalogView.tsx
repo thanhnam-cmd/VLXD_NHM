@@ -129,11 +129,15 @@ export const CatalogView: React.FC<{ kind: CatalogKind; onOpenProject: (id: stri
       onOpen: () => onOpenProject(p.id)
     }));
   } else if (kind === 'cat_subcontractors') {
-    head = ['Đơn vị', 'Mã số thuế', 'Đầu mối', 'Số điện thoại', 'Khu vực hoạt động', 'Hợp tác', 'Phần việc đã giao'];
+    head = ['Đơn vị', 'Mã số thuế', 'Đầu mối', 'Số điện thoại', 'Khu vực hoạt động', 'Hợp tác', 'Dự án tham gia', 'Phần việc đã giao'];
     rows = subcontractors.filter(s => match(s.companyName, s.contactPerson, s.area, s.taxCode)).map(s => ({
       key: s.id,
       cells: [<strong>{s.companyName}</strong>, <span className="font-mono">{s.taxCode || '—'}</span>, `${s.contactPerson}${s.contactTitle ? `, ${s.contactTitle}` : ''}`, s.phone || '—', s.area || '—',
         <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${s.status === 'HOP_TAC' ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-600'}`}>{s.status === 'HOP_TAC' ? 'Đang hợp tác' : 'Ngừng hợp tác'}</span>,
+        (() => {
+          const ps = projects.filter(p => (p.externalTeams || []).some(x => x.contractorId === s.id));
+          return ps.length ? <span title={ps.map(p => `${p.code}: ${p.externalTeams!.find(x => x.contractorId === s.id)!.workerCount} người`).join('\n')}>{ps.length} dự án</span> : 0;
+        })(),
         externalAssignments.filter(e => e.contractorId === s.id).length],
       onEdit: () => setSubModal({ item: s }),
       faded: s.status !== 'HOP_TAC'
