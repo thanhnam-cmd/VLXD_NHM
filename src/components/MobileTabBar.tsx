@@ -62,7 +62,7 @@ export const MobileTabBar: React.FC<MobileTabBarProps> = ({
 
   return (
     <nav 
-      className="md:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 z-40 px-2 py-1 shadow-lg"
+      className="md:hidden print:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 z-40 px-2 py-1 shadow-lg"
       style={{ paddingBottom: 'calc(4px + env(safe-area-inset-bottom, 0px))' }}
       aria-label="Thanh điều hướng di động"
     >

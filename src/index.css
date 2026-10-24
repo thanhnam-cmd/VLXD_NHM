@@ -48,3 +48,17 @@
 .transition-standard {
   transition: all 0.18s cubic-bezier(0.16, 1, 0.3, 1);
 }
+
+/* In báo cáo: khổ A4 ngang, chỉ in phần nội dung, bảng dàn đủ chiều rộng */
+@media print {
+  @page { size: A4 landscape; margin: 10mm; }
+  html, body { background: #fff !important; }
+  body { -webkit-print-color-adjust: exact; print-color-adjust: exact; font-size: 11px; }
+  .shadow-2xs, .shadow-xs, .shadow-sm { box-shadow: none !important; }
+  table { width: 100% !important; table-layout: auto; border-collapse: collapse; }
+  th, td { padding: 4px 6px !important; font-size: 10px !important; }
+  thead { display: table-header-group; }
+  tr { break-inside: avoid; page-break-inside: avoid; }
+  .min-h-screen, .h-screen { min-height: 0 !important; height: auto !important; }
+  .overflow-hidden, .overflow-auto, .overflow-y-auto { overflow: visible !important; }
+}

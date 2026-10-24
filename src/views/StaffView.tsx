@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Staff, StaffSkill, Assignment } from '../types/index.ts';
+import { Staff, StaffSkill, Assignment, Team } from '../types/index.ts';
 import { useStore } from '../state/store.tsx';
 import { DEMO_QUERY_TIME } from '../utils/progressCalculator.ts';
 import { UserPlus, Search, Star } from 'lucide-react';
@@ -10,16 +10,14 @@ const ROLE_TITLES: [string, string][] = [
   ['QUAN_LY', 'Quản lý dự án'], ['DOI_TRUONG', 'Đội trưởng'], ['KY_SU', 'Kỹ sư kỹ thuật'],
   ['KY_THUAT_VIEN', 'Kỹ thuật viên'], ['CONG_NHAN', 'Công nhân thi công'], ['NHAN_VIEN_THIET_KE', 'Nhân viên thiết kế']
 ];
-const SKILLS = [
-  'Kéo cáp và lắp máng cáp, ống luồn', 'Cấu hình mạng, VLAN, WiFi', 'Lắp đặt và cấu hình camera giám sát', 'Kiểm soát ra vào, khóa từ',
-  'Âm thanh thông báo', 'Âm thanh hình ảnh và hội nghị trực tuyến', 'Hạ tầng thoại, tổng đài', 'Nhà thông minh',
-  'Thiết kế bản vẽ CAD, shop drawing', 'Khảo sát và nghiệm thu'
-];
-const TEAMS: [string, string][] = [['1', 'Đội thi công 1'], ['2', 'Đội thi công 2'], ['3', 'Đội thi công 3'], ['4', 'Tổ thiết kế']];
 const LEVEL_LABEL: Record<string, string> = { CO_BAN: 'Cơ bản', THANH_THAO: 'Thành thạo', CHUYEN_SAU: 'Chuyên sâu' };
 
 const primarySkill = (s: Staff) => s.skills?.find(k => k.isPrimary)?.name || s.specialty || '';
-const teamShort = (s: Staff) => TEAMS.find(t => t[0] === s.teamId)?.[1] || (s.teamName ? s.teamName.split(' - ')[0] : '—');
+/** Tên đội viết gọn, ví dụ "Đội thi công 1" */
+const teamShort = (s: Staff, teams: Team[]) => {
+  const name = teams.find(t => t.id === s.teamId)?.name || s.teamName;
+  return name ? name.split(' - ')[0] : '—';
+};
 
 interface StaffViewProps {
   onOpenAssignments: () => void;
@@ -30,7 +28,8 @@ const PAGE_SIZE = 10;
 /** Màn hình Hồ sơ nhân sự (MH-03) */
 export const StaffView: React.FC<StaffViewProps> = ({ onOpenAssignments }) => {
   const store = useStore();
-  const { staff, accounts, assignments, leaves, tasks, projects, currentUser } = store;
+  const { staff, accounts, assignments, leaves, tasks, projects, currentUser, teams } = store;
+  const SKILLS = store.skills.map(k => k.name);
   const toast = useToast();
   const [search, setSearch] = useState('');
   const [fTitle, setFTitle] = useState('');
@@ -55,7 +54,7 @@ export const StaffView: React.FC<StaffViewProps> = ({ onOpenAssignments }) => {
     <div className="space-y-6">
       {toast.node}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <h2 className="text-xl font-bold text-[#0D1A36] tracking-tight">Hồ sơ nhân sự</h2>
+        <h2 className="text-xl font-bold text-[#0D1A36] tracking-tight">Danh mục nhân sự</h2>
         {canEdit && (
           <button type="button" onClick={() => setForm({})} className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold rounded-xl bg-[#152A55] text-white hover:bg-[#1E3A75] shadow-xs cursor-pointer">
             <UserPlus className="w-4 h-4" /> Thêm nhân sự
@@ -94,7 +93,7 @@ export const StaffView: React.FC<StaffViewProps> = ({ onOpenAssignments }) => {
                 <td className="p-3 font-mono font-bold text-slate-600">{s.code}</td>
                 <td className="p-3 font-bold text-slate-900">{s.name}</td>
                 <td className="p-3">{ROLE_TITLES.find(r => r[0] === s.roleTitle)?.[1] || s.roleTitleDisplay}</td>
-                <td className="p-3">{teamShort(s)}</td>
+                <td className="p-3">{teamShort(s, teams)}</td>
                 <td className="p-3">{primarySkill(s) || <span className="text-slate-400">Chưa cập nhật chuyên môn</span>}</td>
                 <td className="p-3 font-mono">{s.phone}</td>
                 <td className="p-3"><span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${s.isActive ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-600'}`}>{s.isActive ? 'Đang làm việc' : 'Ngừng làm việc'}</span></td>
@@ -120,7 +119,7 @@ export const StaffView: React.FC<StaffViewProps> = ({ onOpenAssignments }) => {
           <Drawer title={`${s.code} · ${s.name}`} subtitle={ROLE_TITLES.find(r => r[0] === s.roleTitle)?.[1] || s.roleTitleDisplay} onClose={() => setViewStaff(null)}>
             <div className="p-3 rounded-xl border border-slate-200 space-y-1">
               <div className="font-bold text-slate-800 mb-1">Thông tin cá nhân</div>
-              <div>Đội/tổ: {teamShort(s)} · Điện thoại: {s.phone || '—'} · Email: {s.email || '—'}</div>
+              <div>Đội/tổ: {teamShort(s, teams)} · Điện thoại: {s.phone || '—'} · Email: {s.email || '—'}</div>
               <div>Ngày vào làm: {formatDate(s.startDate) || '—'}{!s.isActive && ` · Ngừng làm việc từ ${formatDate(s.leaveDate)}`}</div>
               <div className="flex flex-wrap gap-1.5 pt-1">
                 {skills.length === 0 ? <span className="text-slate-400">Chưa cập nhật chuyên môn</span> : skills.map(k => (
@@ -155,7 +154,9 @@ export const StaffView: React.FC<StaffViewProps> = ({ onOpenAssignments }) => {
 
 /** Biểu mẫu hồ sơ nhân sự (MH-03, Hình 3.40) */
 const StaffFormModal: React.FC<{ staff?: Staff; onClose: () => void; onSaved: (m: string) => void; onOpenAssignments: () => void }> = ({ staff: s, onClose, onSaved, onOpenAssignments }) => {
-  const { staff, accounts, assignments, tasks, saveStaff } = useStore();
+  const { staff, accounts, assignments, tasks, saveStaff, teams, skills: skillCatalog } = useStore();
+  const SKILLS = skillCatalog.map(k => k.name);
+  const TEAMS: [string, string][] = teams.map(t => [t.id, t.name]);
   const isEdit = !!s;
   const codeLocked = isEdit && (assignments.some(a => a.staffId === s!.id) || accounts.some(a => a.staffId === s!.id));
   const [code, setCode] = useState(s?.code || nextCode(staff.map(x => x.code), 'NV', 3));

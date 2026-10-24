@@ -24,6 +24,7 @@ import { StaffView } from './views/StaffView.tsx';
 import { AdminView } from './views/AdminView.tsx';
 import { ReportsView } from './views/ReportsView.tsx';
 import { MyProjectsView } from './views/MyProjectsView.tsx';
+import { CatalogView } from './views/CatalogView.tsx';
 import { TeamLeadProjectView } from './views/TeamLeadProjectView.tsx';
 
 /** Tham số điều hướng giữa các màn hình (bộ lọc mang theo từ thẻ chỉ số, ngữ cảnh mở biểu mẫu) */
@@ -35,7 +36,7 @@ export interface NavParams {
   worklogStatus?: string;
   worklogTaskId?: string;
   worklogProjectId?: string;
-  reportTab?: 'BC-01' | 'BC-02' | 'BC-03';
+  reportTab?: 'BC-01' | 'BC-02' | 'BC-03' | 'BC-04';
   reportFilter?: string;
   focusTaskId?: string;
 }
@@ -84,6 +85,11 @@ const AppShell: React.FC = () => {
   const go = (tab: ActiveTab, params: NavParams = {}) => {
     setSelectedProjectId(null);
     setNav(params);
+    // Lịch nghỉ/bận và Đội thi công ngoài là mục riêng trên thanh menu dọc
+    if (tab === 'assignments' && params.assignTab && params.assignTab !== 'assignments') {
+      setActiveTab(params.assignTab);
+      return;
+    }
     setActiveTab(tab);
   };
 
@@ -200,10 +206,11 @@ const AppShell: React.FC = () => {
         return <ProjectsView key={nav.projectStatus || 'all'} initialStatus={nav.projectStatus} onSelectProject={(id) => setSelectedProjectId(id)} />;
       case 'assignments':
       case 'leaves':
+      case 'contractor':
         return (
           <AssignmentView
             key={JSON.stringify(nav)}
-            initialTab={activeTab === 'leaves' ? 'leaves' : nav.assignTab}
+            initialTab={activeTab}
             initialFilter={nav.assignFilter}
             draft={nav.draft}
           />
@@ -221,6 +228,14 @@ const AppShell: React.FC = () => {
         return <TechnicalDocsView onOpenDocViewer={setSelectedDocForViewer} onDownloadDoc={handleDownloadDoc} />;
       case 'staff':
         return <StaffView onOpenAssignments={() => go('assignments', { assignTab: 'assignments' })} />;
+      case 'cat_customers':
+      case 'cat_projects':
+      case 'cat_subcontractors':
+      case 'cat_categories':
+      case 'cat_teams':
+      case 'cat_skills':
+      case 'cat_systems':
+        return <CatalogView key={activeTab} kind={activeTab} onOpenProject={(id) => setSelectedProjectId(id)} onNavigate={(t) => go(t)} />;
       case 'reports':
         return (
           <ReportsView
@@ -267,7 +282,7 @@ const AppShell: React.FC = () => {
           <Sidebar activeTab={sidebarTab} onTabChange={(tab) => go(tab)} currentUser={currentUser} />
         </div>
 
-        <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-[1600px] w-full mx-auto pb-24 md:pb-8">
+        <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-[1600px] w-full mx-auto pb-24 md:pb-8 print:p-0 print:max-w-none">
           {store.syncError && (
             <div className="mb-4 p-3 rounded-xl bg-red-50 border border-red-200 text-red-700 text-xs font-semibold">{store.syncError}</div>
           )}

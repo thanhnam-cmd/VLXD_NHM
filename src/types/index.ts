@@ -56,6 +56,31 @@ export interface Staff {
   skills?: StaffSkill[]; // nhan_su_chuyen_mon
 }
 
+/** Danh mục Tổ đội (doi_thi_cong) */
+export interface Team {
+  id: string;
+  code: string;
+  name: string;
+  kind: 'THI_CONG' | 'THIET_KE' | string;
+  description?: string;
+}
+
+/** Danh mục Chuyên môn (chuyen_mon) */
+export interface SkillCatalog {
+  id: string;
+  code: string;
+  name: string;
+  description?: string;
+}
+
+/** Danh mục Loại hệ thống (loai_he_thong) */
+export interface SystemType {
+  id: string;
+  code: string;
+  name: string;
+  description?: string;
+}
+
 export interface StaffSkill {
   name: string;
   level: 'CO_BAN' | 'THANH_THAO' | 'CHUYEN_SAU';
@@ -266,6 +291,11 @@ export interface WorkLog {
   recordedByManager?: boolean; // Ghi nhận thay hiện trường
   externalAssignmentId?: string;
   photos?: { name: string; dataUrl?: string; size?: number }[];
+  // Ghi chú đội thi công ngoài (không bắt buộc) – nguồn dữ liệu cho BC-04
+  externalTeamId?: string;
+  externalTeamCount?: number;
+  externalStaffingStatus?: 'DU' | 'THIEU' | 'THUA';
+  externalTeamNote?: string;
   proofFile?: {
     originalName: string;
     filePath: string;

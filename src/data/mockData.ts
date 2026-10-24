@@ -12,7 +12,10 @@ import {
   Category,
   Customer,
   ExternalAssignment,
-  AuditLog
+  AuditLog,
+  Team,
+  SkillCatalog,
+  SystemType
 } from '../types/index.ts';
 
 export const SYSTEM_CONFIG: SystemConfig = {
@@ -310,6 +313,37 @@ export const INITIAL_CATEGORIES: Category[] = [
 ];
 
 // 10 khách hàng từ bảng khach_hang
+// Danh mục tổ đội (doi_thi_cong), chuyên môn (chuyen_mon), loại hệ thống (loai_he_thong)
+export const INITIAL_TEAMS: Team[] = [
+  { id: '1', code: 'DTC1', name: 'Đội thi công 1 - Hạ tầng mạng và thoại', kind: 'THI_CONG', description: 'Chuyên tuyến cáp mạng, cáp quang và tổng đài thoại' },
+  { id: '2', code: 'DTC2', name: 'Đội thi công 2 - Camera và kiểm soát ra vào', kind: 'THI_CONG', description: 'Chuyên camera giám sát, kiểm soát cửa vân tay thẻ từ' },
+  { id: '3', code: 'DTC3', name: 'Đội thi công 3 - Âm thanh, hình ảnh và hội nghị', kind: 'THI_CONG', description: 'Chuyên âm thanh thông báo PA, hội trường và phòng hội thảo' },
+  { id: '4', code: 'TTK', name: 'Tổ thiết kế', kind: 'THIET_KE', description: 'Chuyên thiết kế bản vẽ CAD, Shop Drawing và dự toán vật tư' }
+];
+
+export const INITIAL_SKILLS: SkillCatalog[] = [
+  { id: '1', code: 'KEO_CAP', name: 'Kéo cáp và lắp máng cáp, ống luồn', description: 'Triển khai tuyến cáp, máng cáp và ống bảo vệ' },
+  { id: '2', code: 'CAU_HINH_MANG', name: 'Cấu hình mạng, VLAN, WiFi', description: 'Cấu hình switch, router, firewall và access point' },
+  { id: '3', code: 'CAMERA', name: 'Lắp đặt và cấu hình camera giám sát', description: 'Camera IP, analog, đầu ghi hình NVR/DVR' },
+  { id: '4', code: 'KIEM_SOAT_RA_VAO', name: 'Kiểm soát ra vào, khóa từ', description: 'Đầu đọc vân tay, thẻ từ, khóa chốt, barrier' },
+  { id: '5', code: 'AM_THANH_THONG_BAO', name: 'Âm thanh thông báo', description: 'Hệ thống âm thanh tòa nhà, phân vùng phát thông báo' },
+  { id: '6', code: 'AM_THANH_HINH_ANH', name: 'Âm thanh hình ảnh và hội nghị trực tuyến', description: 'Màn hình LED, máy chiếu, micro hội thảo, DSP' },
+  { id: '7', code: 'THIET_KE_CAD', name: 'Thiết kế bản vẽ CAD, shop drawing', description: 'Bản vẽ triển khai thi công, mặt bằng, sơ đồ nguyên lý' },
+  { id: '8', code: 'KHAO_SAT_NGHIEM_THU', name: 'Khảo sát và nghiệm thu', description: 'Đo đạc hiện trạng công trình và kiểm tra nghiệm thu' },
+  { id: '9', code: 'TONG_DAI_THOAI', name: 'Hạ tầng thoại, tổng đài', description: 'Tổng đài nội bộ, cáp điện thoại nhiều đôi' },
+  { id: '10', code: 'NHA_THONG_MINH', name: 'Nhà thông minh', description: 'Cảm biến, công tắc thông minh và kịch bản điều khiển' }
+];
+
+export const INITIAL_SYSTEM_TYPES: SystemType[] = [
+  { id: '1', code: 'MANG_THOAI', name: 'Hạ tầng mạng và thoại' },
+  { id: '2', code: 'MANG_KHONG_DAY', name: 'Mạng không dây' },
+  { id: '3', code: 'AM_THANH_THONG_BAO', name: 'Hệ thống âm thanh thông báo' },
+  { id: '4', code: 'AM_THANH_HINH_ANH_HOI_NGHI', name: 'Âm thanh, hình ảnh và hội nghị trực tuyến' },
+  { id: '5', code: 'CAMERA_GIAM_SAT', name: 'Camera giám sát' },
+  { id: '6', code: 'KIEM_SOAT_RA_VAO', name: 'Kiểm soát ra vào' },
+  { id: '7', code: 'NHA_THONG_MINH', name: 'Nhà thông minh' }
+];
+
 export const INITIAL_CUSTOMERS: Customer[] = [
   { id: '1', code: 'KH001', name: 'Ban quản lý tòa chung cư HH Xanh', contactPerson: 'Lê Văn Phúc', phone: '0900000201', email: 'kh001@example.com', address: 'Đông Anh, Hà Nội' },
   { id: '2', code: 'KH002', name: 'Trường THCS Ánh Dương', contactPerson: 'Trần Thị Mai', phone: '0900000202', email: 'kh002@example.com', address: 'Hà Đông, Hà Nội' },

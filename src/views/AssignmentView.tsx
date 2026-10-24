@@ -1,11 +1,11 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Assignment, StaffLeave, Staff } from '../types/index.ts';
 import { useStore } from '../state/store.tsx';
 import { DEMO_QUERY_TIME } from '../utils/progressCalculator.ts';
 import {
   formatDate, formatDateTime, toDbDateTime, toTime, overlaps, isRecordActive, projectAcceptsAssignments, isTaskOpen, isProjectOpen
 } from '../utils/domain.ts';
-import { CalendarClock, AlertCircle, CheckCircle2, Plus, ShieldAlert, Search, AlertTriangle } from 'lucide-react';
+import { CalendarClock, AlertCircle, CheckCircle2, Plus, ShieldAlert, Search, AlertTriangle, ChevronDown, X, Building2 } from 'lucide-react';
 import { useToast, Modal, Drawer, Label, Hint, ErrorBox, inputCls, btnPrimary, btnSecondary, ConfirmDialog, StatusBadge } from '../components/ui.tsx';
 import { EditAssignmentModal, CancelAssignmentDialog } from '../components/AssignmentDialogs.tsx';
 import { ExternalTeamsTab } from './ExternalTeamsTab.tsx';
@@ -36,9 +36,9 @@ const mondayOf = (ymd: string) => {
 
 export const AssignmentView: React.FC<AssignmentViewProps> = ({ initialTab, initialFilter, draft }) => {
   const store = useStore();
-  const { visibleProjects, tasks, staff, assignments, leaves, categories, visibleProjectIds, findConflicts, createAssignments } = store;
+  const { visibleProjects, tasks, staff, assignments, leaves, categories, visibleProjectIds, findConflicts, createAssignments, subcontractors, saveExternalAssignment } = store;
   const toast = useToast();
-  const [activeSubTab, setActiveSubTab] = useState<'assignments' | 'leaves' | 'contractor'>(initialTab || 'assignments');
+  const activeSubTab: 'assignments' | 'leaves' | 'contractor' = initialTab || 'assignments';
   const q = DEMO_QUERY_TIME;
   const today = q.slice(0, 10);
 
@@ -49,9 +49,21 @@ export const AssignmentView: React.FC<AssignmentViewProps> = ({ initialTab, init
   const [staffIds, setStaffIds] = useState<string[]>([]);
   const [staffQuery, setStaffQuery] = useState('');
   const [sDate, setSDate] = useState('');
-  const [sTime, setSTime] = useState('');
   const [eDate, setEDate] = useState('');
-  const [eTime, setETime] = useState('');
+  const sTime = '08:00';
+  const eTime = '17:00';
+  // Đội thi công ngoài hỗ trợ (nếu có): chỉ cần chọn đội và số người
+  const [extOn, setExtOn] = useState(false);
+  const [extTeamId, setExtTeamId] = useState('');
+  const [extCount, setExtCount] = useState('');
+  // Danh sách thả xuống chọn nhân sự
+  const [staffOpen, setStaffOpen] = useState(false);
+  const staffBoxRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const close = (e: MouseEvent) => { if (staffBoxRef.current && !staffBoxRef.current.contains(e.target as Node)) setStaffOpen(false); };
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, []);
   const [splitDaily, setSplitDaily] = useState(false);
   const [skipSunday, setSkipSunday] = useState(false);
   const [notes, setNotes] = useState('');
@@ -89,10 +101,9 @@ export const AssignmentView: React.FC<AssignmentViewProps> = ({ initialTab, init
   }, [staffIds, intervals, assignments, leaves]);
 
   const baseError = (() => {
-    if (!projectId || !taskId || staffIds.length === 0 || !hasTime) return null;
+    if (!projectId || !taskId || (staffIds.length === 0 && !extOn) || !hasTime) return null;
     if (sDate < today) return 'Ngày bắt đầu không được trước ngày hiện tại. Vui lòng kiểm tra lại.';
-    if (toTime(end) <= toTime(start)) return 'Thời gian kết thúc phải sau thời gian bắt đầu.';
-    if (splitDaily && toTime(toDbDateTime(`${sDate} ${eTime}`)) <= toTime(toDbDateTime(`${sDate} ${sTime}`))) return 'Thời gian kết thúc phải sau thời gian bắt đầu.';
+    if (eDate < sDate) return 'Ngày kết thúc không được trước ngày bắt đầu.';
     if (selectedTask && (toTime(start) < toTime(selectedTask.startDate) || toTime(end) > toTime(selectedTask.dueDate))) {
       return `Khoảng phân công phải nằm trong thời gian của công việc (${formatDate(selectedTask.startDate)} – ${formatDate(selectedTask.dueDate)}).`;
     }
@@ -112,23 +123,47 @@ export const AssignmentView: React.FC<AssignmentViewProps> = ({ initialTab, init
     });
     return w;
   }, [staffIds, start, end, assignments]);
-  const ready = !!projectId && !!taskId && staffIds.length > 0 && hasTime && !baseError && !anyConflict;
+  const extValid = !extOn || (!!extTeamId && /^\d+$/.test(extCount) && +extCount >= 1 && +extCount <= 200);
+  const ready = !!projectId && !!taskId && (staffIds.length > 0 || extOn) && hasTime && !baseError && !anyConflict && extValid;
 
   const resetForm = () => {
-    setProjectId(''); setTaskId(''); setStaffIds([]); setSDate(''); setSTime(''); setEDate(''); setETime('');
+    setProjectId(''); setTaskId(''); setStaffIds([]); setSDate(''); setEDate('');
     setSplitDaily(false); setSkipSunday(false); setNotes(''); setFormErr(null);
+    setExtOn(false); setExtTeamId(''); setExtCount('');
   };
 
   const submitAssignment = () => {
     if (!projectId) return setFormErr('Vui lòng chọn dự án.');
     if (!taskId) return setFormErr('Vui lòng chọn công việc.');
-    if (staffIds.length === 0) return setFormErr('Vui lòng chọn ít nhất một nhân sự.');
-    if (!hasTime) return setFormErr('Vui lòng nhập thời gian bắt đầu và kết thúc.');
+    if (staffIds.length === 0 && !extOn) return setFormErr('Vui lòng chọn ít nhất một nhân sự.');
+    if (!hasTime) return setFormErr('Vui lòng nhập ngày bắt đầu và ngày kết thúc.');
     if (baseError) return setFormErr(baseError);
-    const items = staffIds.flatMap(sid => intervals.map(iv => ({ taskId, staffId: sid, startDate: iv.s, endDate: iv.e, notes: notes.trim() || undefined })));
-    const r = createAssignments(items);
-    if (!r.ok) return setFormErr(r.message);
-    toast.show(r.message);
+    if (extOn && !extTeamId) return setFormErr('Vui lòng chọn đội thi công ngoài.');
+    if (extOn && !extValid) return setFormErr('Số người tham gia hỗ trợ phải từ 1 đến 200.');
+    const messages: string[] = [];
+    if (staffIds.length > 0) {
+      const items = staffIds.flatMap(sid => intervals.map(iv => ({ taskId, staffId: sid, startDate: iv.s, endDate: iv.e, notes: notes.trim() || undefined })));
+      const r = createAssignments(items);
+      if (!r.ok) return setFormErr(r.message);
+      messages.push(r.message);
+    }
+    if (extOn && selectedTask) {
+      const team = subcontractors.find(x => x.id === extTeamId);
+      const r = saveExternalAssignment({
+        contractorId: extTeamId,
+        projectId,
+        taskId,
+        workDescription: notes.trim() || `Hỗ trợ thi công ${selectedTask.code} · ${selectedTask.title}`,
+        startDate: start,
+        dueDate: end,
+        workerCount: +extCount,
+        nmhCoordinatorId: selectedTask.assigneeId || staffIds[0] || '',
+        notes: 'Lập cùng phân công thi công'
+      });
+      if (!r.ok) return setFormErr(r.message);
+      messages.push(`Đã giao ${team?.companyName} hỗ trợ ${extCount} người.`);
+    }
+    toast.show(messages.join(' '));
     resetForm();
   };
 
@@ -199,14 +234,11 @@ export const AssignmentView: React.FC<AssignmentViewProps> = ({ initialTab, init
 
       {/* 1. Tiêu đề trang, 2. Ba tab */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <h2 className="text-xl font-bold text-[#0D1A36] tracking-tight">Phân công nhân sự và Quản lý lịch bận</h2>
-        <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-lg border border-slate-200 text-xs font-medium">
-          {([['assignments', 'Lập và tra cứu phân công'], ['leaves', `Lịch nghỉ/bận (${upcomingLeaves.length})`], ['contractor', 'Đội thi công ngoài']] as const).map(([k, label]) => (
-            <button key={k} onClick={() => setActiveSubTab(k)}
-              className={`px-3 py-1.5 rounded-md transition-all cursor-pointer ${activeSubTab === k ? 'bg-white text-[#152A55] font-semibold shadow-xs' : 'text-slate-600'}`}>
-              {label}
-            </button>
-          ))}
+        <div>
+          <h2 className="text-xl font-bold text-[#0D1A36] tracking-tight">
+            {activeSubTab === 'assignments' ? 'Lập và tra cứu phân công' : activeSubTab === 'leaves' ? `Lịch nghỉ/bận (${upcomingLeaves.length})` : 'Đội thi công ngoài'}
+          </h2>
+          <p className="text-[11px] text-slate-500 mt-0.5">Phân công thi công</p>
         </div>
       </div>
 
@@ -271,49 +303,70 @@ export const AssignmentView: React.FC<AssignmentViewProps> = ({ initialTab, init
                 </div>
 
                 <div>
-                  <Label required>Nhân sự thi công</Label>
-                  <div className="relative mb-1.5">
-                    <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
-                    <input value={staffQuery} onChange={e => setStaffQuery(e.target.value)} placeholder="Tìm theo họ tên, chức danh, chuyên môn" className={`${inputCls} pl-8`} />
+                  <Label required={!extOn}>Nhân sự thi công</Label>
+                  <div className="relative" ref={staffBoxRef}>
+                    <button type="button" onClick={() => setStaffOpen(!staffOpen)}
+                      className={`${inputCls} flex items-center gap-1.5 flex-wrap min-h-[38px] text-left cursor-pointer`}>
+                      {staffIds.length === 0 ? <span className="text-slate-500 flex-1">-- Bấm để chọn nhân sự --</span> : (
+                        <span className="flex flex-wrap gap-1 flex-1">
+                          {staffIds.map(id => {
+                            const p = staff.find(x => x.id === id);
+                            return (
+                              <span key={id} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 font-semibold">
+                                {p?.name}
+                                <X className="w-3 h-3 cursor-pointer" onClick={(e) => { e.stopPropagation(); setStaffIds(staffIds.filter(x => x !== id)); }} />
+                              </span>
+                            );
+                          })}
+                        </span>
+                      )}
+                      <ChevronDown className="w-4 h-4 text-slate-500 shrink-0 ml-auto" />
+                    </button>
+                    {staffOpen && (
+                      <div className="absolute z-30 left-0 right-0 mt-1 bg-white border border-slate-200 rounded-xl shadow-xl">
+                        <div className="p-2 border-b border-slate-100 relative">
+                          <Search className="w-3.5 h-3.5 text-slate-400 absolute left-4 top-1/2 -translate-y-1/2" />
+                          <input autoFocus value={staffQuery} onChange={e => setStaffQuery(e.target.value)} placeholder="Tìm theo họ tên, chức danh, chuyên môn" className={`${inputCls} pl-8`} />
+                        </div>
+                        <div className="max-h-60 overflow-y-auto divide-y divide-slate-100">
+                          {activeStaff.filter(s => !staffQuery || `${s.name} ${s.roleTitleDisplay} ${s.specialty}`.toLowerCase().includes(staffQuery.toLowerCase())).map(s => {
+                            const busy = hasTime ? intervals.some(iv => findConflicts(s.id, iv.s, iv.e).length > 0) : null;
+                            const checked = staffIds.includes(s.id);
+                            return (
+                              <label key={s.id} className={`flex items-center gap-2 px-3 py-2 cursor-pointer ${checked ? 'bg-blue-50/60' : 'hover:bg-slate-50'}`}>
+                                <input type="checkbox" checked={checked} onChange={e => setStaffIds(e.target.checked ? [...staffIds, s.id] : staffIds.filter(x => x !== s.id))} />
+                                <span className="flex-1 min-w-0">
+                                  <span className="font-semibold text-slate-900">{s.name}</span>
+                                  <span className="block text-[10px] text-slate-500 truncate">{s.roleTitleDisplay} · {s.specialty || 'Chưa cập nhật chuyên môn'}</span>
+                                </span>
+                                {busy !== null && (
+                                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-semibold shrink-0 ${busy ? 'bg-red-50 text-red-600' : 'bg-emerald-50 text-emerald-700'}`}>{busy ? 'Trùng lịch' : 'Rảnh'}</span>
+                                )}
+                              </label>
+                            );
+                          })}
+                        </div>
+                        <div className="p-2 border-t border-slate-100 flex justify-between items-center">
+                          <span className="text-[11px] text-slate-500">Đã chọn {staffIds.length} nhân sự</span>
+                          <button type="button" onClick={() => setStaffOpen(false)} className="px-3 py-1 rounded-lg bg-[#152A55] text-white font-semibold cursor-pointer">Xong</button>
+                        </div>
+                      </div>
+                    )}
                   </div>
-                  <div className="max-h-44 overflow-y-auto border border-slate-200 rounded-lg divide-y divide-slate-100">
-                    {activeStaff.filter(s => !staffQuery || `${s.name} ${s.roleTitleDisplay} ${s.specialty}`.toLowerCase().includes(staffQuery.toLowerCase())).map(s => {
-                      const busy = hasTime ? intervals.some(iv => findConflicts(s.id, iv.s, iv.e).length > 0) : null;
-                      return (
-                        <label key={s.id} className="flex items-center gap-2 px-2.5 py-1.5 hover:bg-slate-50 cursor-pointer">
-                          <input type="checkbox" checked={staffIds.includes(s.id)} onChange={e => setStaffIds(e.target.checked ? [...staffIds, s.id] : staffIds.filter(x => x !== s.id))} />
-                          <span className="flex-1">{s.name} – {s.roleTitleDisplay} – {s.specialty || 'Chưa cập nhật chuyên môn'}</span>
-                          {busy !== null && (
-                            <span className={`text-[10px] px-1.5 py-0.5 rounded font-semibold ${busy ? 'bg-red-50 text-red-600' : 'bg-emerald-50 text-emerald-700'}`}>{busy ? 'Trùng lịch' : 'Rảnh'}</span>
-                          )}
-                        </label>
-                      );
-                    })}
-                  </div>
-                  {staffIds.length > 0 && <Hint>Đã chọn {staffIds.length} nhân sự; mỗi người tạo một phân công riêng.</Hint>}
+                  {!hasTime && <Hint>Chọn ngày trước để thấy nhân sự Rảnh hay Trùng lịch.</Hint>}
                 </div>
 
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <Label required>Từ ngày và giờ bắt đầu</Label>
-                    <div className="flex gap-1.5">
-                      <input type="date" value={sDate} onChange={e => { setSDate(e.target.value); if (!eDate) setEDate(e.target.value); }} className={`${inputCls} font-mono`} />
-                      <input type="time" value={sTime} onChange={e => setSTime(e.target.value)} className={`${inputCls} font-mono w-24`} />
-                    </div>
+                    <Label required>Từ ngày</Label>
+                    <input type="date" value={sDate} onChange={e => { setSDate(e.target.value); if (!eDate || eDate < e.target.value) setEDate(e.target.value); }} className={`${inputCls} font-mono`} />
                   </div>
                   <div>
-                    <Label required>Đến ngày và giờ kết thúc</Label>
-                    <div className="flex gap-1.5">
-                      <input type="date" value={eDate} onChange={e => setEDate(e.target.value)} className={`${inputCls} font-mono`} />
-                      <input type="time" value={eTime} onChange={e => setETime(e.target.value)} className={`${inputCls} font-mono w-24`} />
-                    </div>
+                    <Label required>Đến ngày</Label>
+                    <input type="date" value={eDate} min={sDate || undefined} onChange={e => setEDate(e.target.value)} className={`${inputCls} font-mono`} />
                   </div>
                 </div>
-                <div className="flex gap-1.5">
-                  {([['Cả ngày', '08:00', '17:00'], ['Buổi sáng', '08:00', '12:00'], ['Buổi chiều', '13:00', '17:00']] as const).map(([l, a, b]) => (
-                    <button key={l} type="button" onClick={() => { setSTime(a); setETime(b); }} className="px-2.5 py-1 rounded-lg border border-slate-300 bg-white hover:bg-slate-100 font-semibold cursor-pointer">{l} ({a}–{b})</button>
-                  ))}
-                </div>
+                <Hint>Phân công tính theo ngày làm việc (08:00–17:00).</Hint>
 
                 <div className="space-y-1">
                   <label className="flex items-center gap-2 cursor-pointer">
@@ -332,8 +385,30 @@ export const AssignmentView: React.FC<AssignmentViewProps> = ({ initialTab, init
                   <textarea rows={2} maxLength={255} value={notes} onChange={e => setNotes(e.target.value)} placeholder="Ví dụ: Giám sát đo kiểm máy Fluke, phối hợp thợ cáp" className={inputCls} />
                 </div>
 
+                <div className={`rounded-xl border ${extOn ? 'border-purple-200 bg-purple-50/40' : 'border-slate-200'} p-3 space-y-2.5`}>
+                  <label className="flex items-center gap-2 cursor-pointer font-semibold text-slate-800">
+                    <input type="checkbox" checked={extOn} onChange={e => setExtOn(e.target.checked)} />
+                    <Building2 className="w-4 h-4 text-purple-600" /> Có đội thi công ngoài hỗ trợ (nếu có)
+                  </label>
+                  {extOn && (
+                    <div className="grid grid-cols-3 gap-2.5">
+                      <div className="col-span-2">
+                        <Label required>Đội thi công ngoài</Label>
+                        <select value={extTeamId} onChange={e => setExtTeamId(e.target.value)} className={inputCls}>
+                          <option value="">-- Chọn đội thi công --</option>
+                          {subcontractors.filter(x => x.status === 'HOP_TAC').map(x => <option key={x.id} value={x.id}>{x.companyName}</option>)}
+                        </select>
+                      </div>
+                      <div>
+                        <Label required>Số người hỗ trợ</Label>
+                        <input type="number" min={1} max={200} value={extCount} onChange={e => setExtCount(e.target.value)} className={`${inputCls} font-mono`} />
+                      </div>
+                    </div>
+                  )}
+                </div>
+
                 {/* 10. Vùng kiểm tra xung đột */}
-                {projectId && taskId && staffIds.length > 0 && hasTime && (
+                {projectId && taskId && (staffIds.length > 0 || extOn) && hasTime && (
                   baseError || anyConflict ? (
                     <div className="p-3 bg-red-50 border border-red-300 rounded-lg text-red-700 flex items-start gap-2.5">
                       <ShieldAlert className="w-5 h-5 shrink-0 text-red-600 mt-0.5" />
@@ -345,7 +420,7 @@ export const AssignmentView: React.FC<AssignmentViewProps> = ({ initialTab, init
                   ) : (
                     <div className="p-2.5 bg-emerald-50 border border-emerald-200 rounded-lg text-emerald-800 flex items-center gap-2 text-[11px]">
                       <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                      <span>Khoảng thời gian hợp lệ: {staffIds.map(id => staff.find(s => s.id === id)?.name).join(', ')} sẵn sàng trong khoảng này.</span>
+                      <span>Khoảng thời gian hợp lệ{staffIds.length > 0 ? `: ${staffIds.map(id => staff.find(s => s.id === id)?.name).join(', ')} sẵn sàng trong khoảng này.` : '.'}</span>
                     </div>
                   )
                 )}

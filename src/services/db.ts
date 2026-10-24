@@ -12,7 +12,10 @@ import {
   ExternalSubcontractor,
   ExternalAssignment,
   AuditLog,
-  SystemConfig
+  SystemConfig,
+  Team,
+  SkillCatalog,
+  SystemType
 } from '../types/index.ts';
 import {
   INITIAL_PROJECTS,
@@ -28,6 +31,9 @@ import {
   INITIAL_SUBCONTRACTORS,
   INITIAL_EXTERNAL_ASSIGNMENTS,
   INITIAL_AUDIT_LOGS,
+  INITIAL_TEAMS,
+  INITIAL_SKILLS,
+  INITIAL_SYSTEM_TYPES,
   SYSTEM_CONFIG
 } from '../data/mockData.ts';
 
@@ -45,7 +51,10 @@ const STORAGE_KEYS = {
   SUBCONTRACTORS: 'nmh_db_subcontractors',
   EXTERNAL_ASSIGNMENTS: 'nmh_db_external_assignments',
   AUDIT_LOGS: 'nmh_db_audit_logs',
-  CONFIG: 'nmh_db_config'
+  CONFIG: 'nmh_db_config',
+  TEAMS: 'nmh_db_teams',
+  SKILLS: 'nmh_db_skills',
+  SYSTEM_TYPES: 'nmh_db_system_types'
 };
 
 function loadFromStorage<T>(key: string, fallback: T): T {
@@ -367,6 +376,15 @@ export const dbService = {
 
   getAuditLogs: (): AuditLog[] => loadFromStorage<AuditLog[]>(STORAGE_KEYS.AUDIT_LOGS, INITIAL_AUDIT_LOGS),
   saveAuditLogs: (data: AuditLog[]) => saveToStorage(STORAGE_KEYS.AUDIT_LOGS, data),
+
+  getTeams: (): Team[] => loadFromStorage<Team[]>(STORAGE_KEYS.TEAMS, INITIAL_TEAMS),
+  saveTeams: (data: Team[]) => saveToStorage(STORAGE_KEYS.TEAMS, data),
+
+  getSkills: (): SkillCatalog[] => loadFromStorage<SkillCatalog[]>(STORAGE_KEYS.SKILLS, INITIAL_SKILLS),
+  saveSkills: (data: SkillCatalog[]) => saveToStorage(STORAGE_KEYS.SKILLS, data),
+
+  getSystemTypes: (): SystemType[] => loadFromStorage<SystemType[]>(STORAGE_KEYS.SYSTEM_TYPES, INITIAL_SYSTEM_TYPES),
+  saveSystemTypes: (data: SystemType[]) => saveToStorage(STORAGE_KEYS.SYSTEM_TYPES, data),
 
   getConfig: (): SystemConfig => ({ ...SYSTEM_CONFIG, ...loadFromStorage<Partial<SystemConfig>>(STORAGE_KEYS.CONFIG, {}) }),
   saveConfig: (data: SystemConfig) => saveToStorage(STORAGE_KEYS.CONFIG, data),

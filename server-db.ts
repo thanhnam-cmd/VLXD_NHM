@@ -78,6 +78,10 @@ export async function ensureSchemaExtensions(pool: pg.Pool) {
     ALTER TABLE doi_ben_ngoai ADD COLUMN IF NOT EXISTS ma_so_thue VARCHAR(20);
     ALTER TABLE doi_ben_ngoai ADD COLUMN IF NOT EXISTS chuc_vu_lien_he VARCHAR(100);
     ALTER TABLE phan_cong_ben_ngoai ADD COLUMN IF NOT EXISTS gia_tri_khoan BIGINT;
+    ALTER TABLE cap_nhat_ket_qua ADD COLUMN IF NOT EXISTS doi_ben_ngoai_id INT REFERENCES doi_ben_ngoai(id);
+    ALTER TABLE cap_nhat_ket_qua ADD COLUMN IF NOT EXISTS so_nguoi_doi_ngoai INT;
+    ALTER TABLE cap_nhat_ket_qua ADD COLUMN IF NOT EXISTS tinh_trang_nhan_su_ngoai VARCHAR(20);
+    ALTER TABLE cap_nhat_ket_qua ADD COLUMN IF NOT EXISTS ghi_chu_doi_ngoai TEXT;
     CREATE TABLE IF NOT EXISTS nhan_su_ngoai_theo_ngay (
       phan_cong_ben_ngoai_id INT REFERENCES phan_cong_ben_ngoai(id),
       ngay DATE NOT NULL,
@@ -199,7 +203,9 @@ export async function bootstrap(pool: pg.Pool) {
       COALESCE(ns.ho_ten, tk.ten_hien_thi) AS "submittedByStaffName", ns.chuc_danh AS chuc_danh, vt.ma AS role,
       ${TS('c.thoi_diem_ghi_nhan')} AS "submittedAt", c.noi_dung AS content, c.kho_khan AS "issuesFaced",
       c.de_nghi_hoan_thanh AS de_nghi, c.cap_nhat_dinh_chinh_id::text AS "correctionForLogId",
-      c.phan_cong_ben_ngoai_id::text AS "externalAssignmentId", cv.trang_thai AS task_status
+      c.phan_cong_ben_ngoai_id::text AS "externalAssignmentId", cv.trang_thai AS task_status,
+      c.doi_ben_ngoai_id::text AS "externalTeamId", c.so_nguoi_doi_ngoai AS "externalTeamCount",
+      c.tinh_trang_nhan_su_ngoai AS "externalStaffingStatus", c.ghi_chu_doi_ngoai AS "externalTeamNote"
     FROM cap_nhat_ket_qua c JOIN cong_viec cv ON c.cong_viec_id = cv.id
     LEFT JOIN tai_khoan tk ON c.tai_khoan_gui_id = tk.id LEFT JOIN vai_tro vt ON tk.vai_tro_id = vt.id
     LEFT JOIN nhan_su ns ON tk.nhan_su_id = ns.id ORDER BY c.thoi_diem_ghi_nhan DESC`);
@@ -213,6 +219,8 @@ export async function bootstrap(pool: pg.Pool) {
     requestApproval: l.de_nghi === 1, statusVerifiedByManager: l.de_nghi === 1 && l.task_status === 'HOAN_THANH',
     correctionForLogId: l.correctionForLogId || undefined, externalAssignmentId: l.externalAssignmentId || undefined,
     recordedByManager: l.role === 'QUAN_LY' || l.role === 'QUAN_TRI',
+    externalTeamId: l.externalTeamId || undefined, externalTeamCount: l.externalTeamCount ?? undefined,
+    externalStaffingStatus: l.externalStaffingStatus || undefined, externalTeamNote: l.externalTeamNote || undefined,
     photos: files.filter(f => f.lid === l.id).map(f => ({ name: f.name, size: Number(f.size) || undefined, dataUrl: String(f.path || '').startsWith('data:') ? f.path : undefined }))
   }));
 
@@ -280,7 +288,12 @@ export async function bootstrap(pool: pg.Pool) {
     config[field] = field === 'evaluationTimestamp' || field === 'allowedFileTypes' ? r.v : parseInt(r.v, 10);
   });
 
-  return { accounts, staff, customers, projects, categories, tasks, assignments, leaves, workLogs, docs, subcontractors, externalAssignments, auditLogs, config };
+  const teams = await q(`SELECT id::text, ma AS code, ten AS name, loai_doi AS kind, mo_ta AS description FROM doi_thi_cong ORDER BY id`);
+  const skillCatalog = await q(`SELECT id::text, ma AS code, ten AS name, mo_ta AS description FROM chuyen_mon ORDER BY id`);
+  const systemTypes = (await q(`SELECT id::text, ma AS code, ten AS name, mo_ta AS description FROM loai_he_thong ORDER BY id`))
+    .map(s => ({ ...s, name: s.name === 'Hệ thống nhà thông minh' ? 'Nhà thông minh' : s.name }));
+
+  return { accounts, staff, customers, projects, categories, tasks, assignments, leaves, workLogs, docs, subcontractors, externalAssignments, auditLogs, config, teams, skills: skillCatalog, systemTypes };
 }
 
 // ---------------------------------------------------------------------------
@@ -434,7 +447,9 @@ export async function syncEntity(pool: pg.Pool, entity: string, rows: Row[], act
             id: toInt(r.id), cong_viec_id: toInt(r.taskId), phan_cong_ben_ngoai_id: toInt(r.externalAssignmentId),
             tai_khoan_gui_id: toInt(r.submittedByAccountId) ?? acc.byUsername(r.submittedByUsername) ?? actorId,
             thoi_diem_ghi_nhan: toTs(r.submittedAt), noi_dung: r.content, kho_khan: str(r.issuesFaced),
-            de_nghi_hoan_thanh: r.requestApproval ? 1 : 0, cap_nhat_dinh_chinh_id: toInt(r.correctionForLogId)
+            de_nghi_hoan_thanh: r.requestApproval ? 1 : 0, cap_nhat_dinh_chinh_id: toInt(r.correctionForLogId),
+            doi_ben_ngoai_id: toInt(r.externalTeamId), so_nguoi_doi_ngoai: toInt(r.externalTeamCount),
+            tinh_trang_nhan_su_ngoai: str(r.externalStaffingStatus), ghi_chu_doi_ngoai: str(r.externalTeamNote)
           });
           const exists = (await client.query(`SELECT COUNT(*)::int AS n FROM tep_minh_chung WHERE cap_nhat_id = $1`, [toInt(r.id)])).rows[0].n;
           if (exists === 0) {
@@ -475,6 +490,20 @@ export async function syncEntity(pool: pg.Pool, entity: string, rows: Row[], act
             doi_tuong_id: parseInt(String(r.objectId), 10) || 0, gia_tri_cu: r.oldVal == null ? null : JSON.stringify(r.oldVal),
             gia_tri_moi: r.newVal == null ? null : JSON.stringify(r.newVal), ly_do: str(r.reason), thoi_diem_tao: toTs(r.time)
           });
+          break;
+
+        case 'teams':
+          await upsert(client, 'doi_thi_cong', ['id'], {
+            id: toInt(r.id), ma: r.code, ten: r.name, loai_doi: r.kind || 'THI_CONG', mo_ta: str(r.description), thoi_diem_cap_nhat: new Date()
+          });
+          break;
+
+        case 'skills':
+          await upsert(client, 'chuyen_mon', ['id'], { id: toInt(r.id), ma: r.code, ten: r.name, mo_ta: str(r.description) });
+          break;
+
+        case 'systemTypes':
+          await upsert(client, 'loai_he_thong', ['id'], { id: toInt(r.id), ma: r.code, ten: r.name, mo_ta: str(r.description) });
           break;
 
         case 'config':

@@ -3,7 +3,7 @@ import type { WorkLog, Task, UserAccount } from '../types/index.ts';
 import { useStore, AppStore } from '../state/store.tsx';
 import { Modal, Drawer, Label, Hint, ErrorBox, inputCls, btnPrimary, btnSecondary } from './ui.tsx';
 import { formatDate, formatDateTime, isManagerRole, isAdminRole, isTeamLeadRole, normalizeRole, canOperate } from '../utils/domain.ts';
-import { X, Camera, AlertCircle } from 'lucide-react';
+import { X, Camera, AlertCircle, Building2, ImageOff } from 'lucide-react';
 
 /** Nhãn trạng thái thẻ báo cáo suy ra từ dữ liệu (MH-12, Bảng 3.10) */
 export const getLogLabel = (log: WorkLog, task?: Task) => {
@@ -32,6 +32,17 @@ export const reporterOf = (log: WorkLog, store: Pick<AppStore, 'staff' | 'accoun
 
 type Photo = { name: string; dataUrl?: string; size?: number };
 
+/** Ảnh thu nhỏ: nếu chỉ có tên tệp (ảnh lưu ngoài ứng dụng) thì hiện biểu tượng thay vì ảnh vỡ */
+const PhotoThumb: React.FC<{ photo: Photo; className?: string }> = ({ photo, className = '' }) =>
+  photo.dataUrl ? (
+    <img src={photo.dataUrl} alt={photo.name} className={`${className} object-cover rounded border border-slate-200`} />
+  ) : (
+    <span title={photo.name} className={`${className} rounded border border-slate-200 bg-slate-100 text-slate-500 flex flex-col items-center justify-center gap-0.5 p-1`}>
+      <ImageOff className="w-4 h-4" />
+      <span className="text-[8px] leading-tight truncate max-w-full">{photo.name}</span>
+    </span>
+  );
+
 /**
  * Biểu mẫu "Gửi báo cáo nhật ký hiện trường" (MH-18) và hộp thoại "Ghi nhận kết quả" của Quản lý (MH-12).
  * Quản lý: không có ô đề nghị xác nhận hoàn thành, bản ghi mang nhãn "Ghi nhận thay hiện trường".
@@ -45,7 +56,7 @@ export const WorkLogForm: React.FC<{
   compact?: boolean;
 }> = ({ initialProjectId, initialTaskId, correctionOf, onSaved, onCancel }) => {
   const store = useStore();
-  const { currentUser, visibleProjects, tasks, categories, externalAssignments, config, addWorkLog, isTaskAssignedToMe } = store;
+  const { currentUser, visibleProjects, tasks, categories, externalAssignments, config, addWorkLog, isTaskAssignedToMe, subcontractors } = store;
   const isLead = isTeamLeadRole(currentUser);
   const [projectId, setProjectId] = useState(correctionOf?.projectId || initialProjectId || '');
   const [taskId, setTaskId] = useState(correctionOf?.taskId || initialTaskId || '');
@@ -54,6 +65,12 @@ export const WorkLogForm: React.FC<{
   const [externalId, setExternalId] = useState('');
   const [photos, setPhotos] = useState<Photo[]>([]);
   const [requestApproval, setRequestApproval] = useState(false);
+  // Ghi chú đội thi công ngoài (không bắt buộc): tên đội, số người, tình trạng nhân sự, chú thích
+  const [extNoteOn, setExtNoteOn] = useState(false);
+  const [extTeamId, setExtTeamId] = useState('');
+  const [extTeamCount, setExtTeamCount] = useState('');
+  const [extStatus, setExtStatus] = useState<'' | 'DU' | 'THIEU' | 'THUA'>('');
+  const [extNote, setExtNote] = useState('');
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -85,6 +102,8 @@ export const WorkLogForm: React.FC<{
   const submit = () => {
     if (!projectId) return setErr('Vui lòng chọn dự án.');
     if (!taskId) return setErr(isLead ? 'Vui lòng chọn công việc.' : 'Vui lòng chọn hạng mục và công việc.');
+    if (extNoteOn && !extTeamId) return setErr('Vui lòng chọn tên đội thi công ngoài.');
+    if (extNoteOn && extTeamCount && !(/^\d+$/.test(extTeamCount) && +extTeamCount >= 0 && +extTeamCount <= 200)) return setErr('Số người của đội thi công ngoài phải từ 0 đến 200.');
     setBusy(true);
     const r = addWorkLog({
       projectId,
@@ -94,11 +113,16 @@ export const WorkLogForm: React.FC<{
       externalAssignmentId: externalId || undefined,
       photos,
       requestApproval: isLead ? requestApproval : false,
-      correctionForLogId: correctionOf?.id
+      correctionForLogId: correctionOf?.id,
+      externalTeamId: extNoteOn ? extTeamId : undefined,
+      externalTeamCount: extNoteOn && extTeamCount !== '' ? +extTeamCount : undefined,
+      externalStaffingStatus: extNoteOn && extStatus ? extStatus : undefined,
+      externalTeamNote: extNoteOn && extNote.trim() ? extNote.trim() : undefined
     });
     setBusy(false);
     if (!r.ok) return setErr(r.message);
     setContent(''); setIssues(''); setPhotos([]); setRequestApproval(false); setExternalId('');
+    setExtNoteOn(false); setExtTeamId(''); setExtTeamCount(''); setExtStatus(''); setExtNote('');
     if (!correctionOf) { setTaskId(initialTaskId || ''); }
     onSaved(correctionOf ? 'Đã lưu bản đính chính.' : r.message);
   };
@@ -141,6 +165,44 @@ export const WorkLogForm: React.FC<{
           </select>
         </div>
       )}
+      <div className={`rounded-xl border p-3 space-y-2.5 ${extNoteOn ? 'border-purple-200 bg-purple-50/40' : 'border-slate-200'}`}>
+        <label className="flex items-center gap-2 cursor-pointer font-semibold text-slate-800">
+          <input type="checkbox" checked={extNoteOn} onChange={e => setExtNoteOn(e.target.checked)} />
+          <Building2 className="w-4 h-4 text-purple-600" /> Ghi chú đội thi công ngoài (nếu có)
+        </label>
+        {extNoteOn && (
+          <>
+            <div className="grid grid-cols-3 gap-2.5">
+              <div className="col-span-2">
+                <Label required>Tên đội thi công</Label>
+                <select value={extTeamId} onChange={e => setExtTeamId(e.target.value)} className={inputCls}>
+                  <option value="">-- Chọn đội thi công ngoài --</option>
+                  {subcontractors.map(x => <option key={x.id} value={x.id}>{x.companyName}{x.status !== 'HOP_TAC' ? ' (ngừng hợp tác)' : ''}</option>)}
+                </select>
+              </div>
+              <div>
+                <Label>Số người có mặt</Label>
+                <input type="number" min={0} max={200} value={extTeamCount} onChange={e => setExtTeamCount(e.target.value)} className={`${inputCls} font-mono`} />
+              </div>
+            </div>
+            <div>
+              <Label>Tình trạng nhân sự so với yêu cầu</Label>
+              <div className="flex gap-2">
+                {([['DU', 'Đủ'], ['THIEU', 'Thiếu'], ['THUA', 'Thừa']] as const).map(([k, l]) => (
+                  <button key={k} type="button" onClick={() => setExtStatus(extStatus === k ? '' : k)}
+                    className={`px-3 py-1.5 rounded-lg border font-semibold cursor-pointer ${extStatus === k ? (k === 'DU' ? 'bg-emerald-600 text-white border-emerald-600' : k === 'THIEU' ? 'bg-red-600 text-white border-red-600' : 'bg-amber-500 text-white border-amber-500') : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}>
+                    {l}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div>
+              <Label>Chú thích</Label>
+              <textarea rows={2} maxLength={500} value={extNote} onChange={e => setExtNote(e.target.value)} placeholder="Ví dụ: thiếu 1 thợ kéo cáp buổi chiều; đội tự bổ sung ngày mai…" className={inputCls} />
+            </div>
+          </>
+        )}
+      </div>
       <div>
         <Label>Ảnh hiện trường</Label>
         <button type="button" onClick={() => fileRef.current?.click()} className="w-full p-3 border-2 border-dashed border-slate-300 rounded-lg text-slate-500 hover:border-blue-500 flex items-center justify-center gap-2 cursor-pointer">
@@ -225,6 +287,7 @@ export const WorkLogCard: React.FC<{
   const p = projects.find(x => x.id === log.projectId);
   const cat = categories.find(c => c.id === t?.categoryId);
   const ext = externalAssignments.find(e => e.id === log.externalAssignmentId);
+  const extTeam = store.subcontractors.find(x => x.id === log.externalTeamId);
   const label = getLogLabel(log, t);
   const byManager = isRecordedByManager(log, accounts);
   const rep = reporterOf(log, store);
@@ -244,6 +307,17 @@ export const WorkLogCard: React.FC<{
         <div className="text-right text-[11px] text-slate-400 font-mono shrink-0">{formatDateTime(log.submittedAt)}</div>
       </div>
       <p className="text-xs text-slate-700 leading-relaxed whitespace-pre-line">{log.content}</p>
+      {extTeam && (
+        <div className="mt-2 p-2 rounded bg-purple-50 border border-purple-200 text-purple-900 text-xs flex items-start gap-1.5">
+          <Building2 className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+          <div>
+            <strong>Đội thi công ngoài:</strong> {extTeam.companyName}
+            {log.externalTeamCount !== undefined && <> · {log.externalTeamCount} người</>}
+            {log.externalStaffingStatus && <> · <span className={`font-bold ${log.externalStaffingStatus === 'DU' ? 'text-emerald-700' : log.externalStaffingStatus === 'THIEU' ? 'text-red-700' : 'text-amber-700'}`}>{log.externalStaffingStatus === 'DU' ? 'Đủ' : log.externalStaffingStatus === 'THIEU' ? 'Thiếu' : 'Thừa'} nhân sự</span></>}
+            {log.externalTeamNote && <div className="mt-0.5">{log.externalTeamNote}</div>}
+          </div>
+        </div>
+      )}
       {log.issuesFaced && (
         <div className="mt-2 p-2 rounded bg-red-50 border border-red-200 text-red-700 text-xs flex items-start gap-1.5">
           <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
@@ -252,7 +326,7 @@ export const WorkLogCard: React.FC<{
       )}
       {photos.length > 0 && (
         <div className="flex gap-1.5 mt-2">
-          {photos.slice(0, 4).map((ph, i) => <img key={i} src={ph.dataUrl} alt={ph.name} className="w-12 h-12 object-cover rounded border border-slate-200" />)}
+          {photos.slice(0, 4).map((ph, i) => <PhotoThumb key={i} photo={ph} className="w-12 h-12" />)}
           {photos.length > 4 && <span className="w-12 h-12 rounded border border-slate-200 bg-slate-100 flex items-center justify-center text-[11px] font-bold text-slate-600">+{photos.length - 4}</span>}
         </div>
       )}
@@ -287,7 +361,9 @@ export const WorkLogDetailDrawer: React.FC<{ log: WorkLog; onClose: () => void; 
         {log.issuesFaced && <div className="p-2 rounded bg-red-50 border border-red-200 text-red-700"><strong>Vướng mắc phát sinh:</strong> {log.issuesFaced}</div>}
         {(log.photos || []).length > 0 && (
           <div className="grid grid-cols-3 gap-2">
-            {(log.photos || []).map((ph, i) => <img key={i} src={ph.dataUrl} alt={ph.name} onClick={() => setZoom(ph.dataUrl || null)} className="w-full h-24 object-cover rounded-lg border border-slate-200 cursor-zoom-in" />)}
+            {(log.photos || []).map((ph, i) => ph.dataUrl
+              ? <img key={i} src={ph.dataUrl} alt={ph.name} onClick={() => setZoom(ph.dataUrl || null)} className="w-full h-24 object-cover rounded-lg border border-slate-200 cursor-zoom-in" />
+              : <PhotoThumb key={i} photo={ph} className="w-full h-24" />)}
           </div>
         )}
       </div>

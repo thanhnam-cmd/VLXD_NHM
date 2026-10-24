@@ -24,7 +24,7 @@ export const staffingProgress = (e: ExternalAssignment) => {
 const money = (v?: number) => (v ? `${v.toLocaleString('vi-VN')} đ` : '—');
 
 /** Hộp thoại Thêm / Sửa đội thi công ngoài (Hình 3.28) */
-const SubcontractorModal: React.FC<{ sub?: ExternalSubcontractor; onClose: () => void; onSaved: (m: string) => void }> = ({ sub, onClose, onSaved }) => {
+export const SubcontractorModal: React.FC<{ sub?: ExternalSubcontractor; onClose: () => void; onSaved: (m: string) => void }> = ({ sub, onClose, onSaved }) => {
   const { saveSubcontractor } = useStore();
   const [f, setF] = useState({
     companyName: sub?.companyName || '', address: sub?.address || '', taxCode: sub?.taxCode || '',

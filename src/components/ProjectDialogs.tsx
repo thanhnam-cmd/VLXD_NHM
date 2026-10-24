@@ -6,15 +6,16 @@ import { PROJECT_STATUS_LABEL, EMAIL_RE, PHONE_RE, nextCode, toDbDateTime, toTim
 import { DEMO_QUERY_TIME } from '../utils/progressCalculator.ts';
 
 /** Hộp thoại Thêm khách hàng mới (MH-02, Hình 3.18) */
-export const CustomerModal: React.FC<{ onClose: () => void; onSaved: (c: Customer) => void }> = ({ onClose, onSaved }) => {
-  const { customers, addCustomer } = useStore();
-  const [code, setCode] = useState(() => nextCode(customers.map(c => c.code), 'KH', 3));
-  const [name, setName] = useState('');
-  const [contact, setContact] = useState('');
-  const [phone, setPhone] = useState('');
-  const [email, setEmail] = useState('');
-  const [address, setAddress] = useState('');
-  const [notes, setNotes] = useState('');
+export const CustomerModal: React.FC<{ customer?: Customer; onClose: () => void; onSaved: (c: Customer) => void }> = ({ customer, onClose, onSaved }) => {
+  const { customers, addCustomer, updateCustomer } = useStore();
+  const isEdit = !!customer;
+  const [code, setCode] = useState(() => customer?.code || nextCode(customers.map(c => c.code), 'KH', 3));
+  const [name, setName] = useState(customer?.name || '');
+  const [contact, setContact] = useState(customer?.contactPerson || '');
+  const [phone, setPhone] = useState(customer?.phone || '');
+  const [email, setEmail] = useState(customer?.email || '');
+  const [address, setAddress] = useState(customer?.address || '');
+  const [notes, setNotes] = useState(customer?.notes || '');
   const [err, setErr] = useState<string | null>(null);
 
   const submit = () => {
@@ -22,14 +23,20 @@ export const CustomerModal: React.FC<{ onClose: () => void; onSaved: (c: Custome
     if (!name.trim()) return setErr('Vui lòng nhập tên khách hàng.');
     if (phone && !PHONE_RE.test(phone)) return setErr('Số điện thoại không hợp lệ.');
     if (email && !EMAIL_RE.test(email)) return setErr('Email không hợp lệ.');
-    const r = addCustomer({ code, name, contactPerson: contact, phone, email, address, notes });
+    const data = { code, name, contactPerson: contact, phone, email, address, notes };
+    if (isEdit) {
+      const r = updateCustomer(customer!.id, data);
+      if (!r.ok) return setErr(r.message);
+      return onSaved({ ...customer!, ...data });
+    }
+    const r = addCustomer(data);
     if (!r.ok) return setErr(r.message);
     onSaved(r.data!);
   };
 
   return (
     <Modal
-      title="Thêm khách hàng mới"
+      title={isEdit ? `Sửa khách hàng ${customer!.code}` : 'Thêm khách hàng mới'}
       onClose={onClose}
       size="sm"
       footer={<>
@@ -41,7 +48,7 @@ export const CustomerModal: React.FC<{ onClose: () => void; onSaved: (c: Custome
       <div className="grid grid-cols-2 gap-2.5">
         <div>
           <Label required>Mã khách hàng</Label>
-          <input maxLength={20} value={code} onChange={e => setCode(e.target.value)} className={`${inputCls} font-mono`} />
+          <input maxLength={20} value={code} disabled={isEdit} onChange={e => setCode(e.target.value)} className={`${inputCls} font-mono`} />
           <Hint>Dạng KHnnn, có thể sửa; không trùng</Hint>
         </div>
         <div>

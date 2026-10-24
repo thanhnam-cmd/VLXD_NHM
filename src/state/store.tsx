@@ -18,6 +18,9 @@ import type {
   AuditLog,
   AuditAction,
   SystemConfig,
+  Team,
+  SkillCatalog,
+  SystemType,
   ProjectStatus,
   TaskStatus
 } from '../types/index.ts';
@@ -87,6 +90,9 @@ const useStoreState = () => {
   const [subcontractors, setSubcontractors] = useState<ExternalSubcontractor[]>(() => dbService.getSubcontractors());
   const [externalAssignments, setExternalAssignments] = useState<ExternalAssignment[]>(() => dbService.getExternalAssignments());
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>(() => dbService.getAuditLogs());
+  const [teams, setTeams] = useState<Team[]>(() => dbService.getTeams());
+  const [skills, setSkills] = useState<SkillCatalog[]>(() => dbService.getSkills());
+  const [systemTypes, setSystemTypes] = useState<SystemType[]>(() => dbService.getSystemTypes());
 
   const [currentUser, setCurrentUserState] = useState<UserAccount>(() => {
     try {
@@ -111,6 +117,9 @@ const useStoreState = () => {
   useEffect(() => { dbService.saveExternalAssignments(externalAssignments); }, [externalAssignments]);
   useEffect(() => { dbService.saveAuditLogs(auditLogs); }, [auditLogs]);
   useEffect(() => { dbService.saveConfig(config); }, [config]);
+  useEffect(() => { dbService.saveTeams(teams); }, [teams]);
+  useEffect(() => { dbService.saveSkills(skills); }, [skills]);
+  useEffect(() => { dbService.saveSystemTypes(systemTypes); }, [systemTypes]);
 
   // Giữ thông tin tài khoản đang đăng nhập khớp với danh sách tài khoản (đổi phạm vi, đổi tên...)
   useEffect(() => {
@@ -149,6 +158,9 @@ const useStoreState = () => {
     if (data.subcontractors) setSubcontractors(data.subcontractors);
     if (data.externalAssignments) setExternalAssignments(data.externalAssignments);
     if (data.auditLogs) setAuditLogs(data.auditLogs);
+    if (data.teams) setTeams(data.teams);
+    if (data.skills) setSkills(data.skills);
+    if (data.systemTypes) setSystemTypes(data.systemTypes);
     if (data.config) setConfig(prev => ({ ...prev, ...data.config, updatedAt: { ...(prev.updatedAt || {}), ...(data.config.updatedAt || {}) } }));
     setDbMode(true);
   };
@@ -196,6 +208,9 @@ const useStoreState = () => {
   useDbSync('workLogs', workLogs);
   useDbSync('docs', docs);
   useDbSync('auditLogs', auditLogs);
+  useDbSync('teams', teams);
+  useDbSync('skills', skills);
+  useDbSync('systemTypes', systemTypes);
   const configRows = useMemo(() => [{ ...config, id: 'config' }], [config]);
   useDbSync('config', configRows);
 
@@ -318,6 +333,51 @@ const useStoreState = () => {
     setCustomers(prev => [...prev, created]);
     logAudit('TAO_MOI', 'Khách hàng', created.id, undefined, null, { ma: created.code, ten: created.name });
     return ok(`Đã thêm khách hàng ${created.name}.`, created);
+  };
+
+  const updateCustomer = (id: string, c: Omit<Customer, 'id'>): OpResult => {
+    if (!c.code.trim() || !c.name.trim()) return fail('Vui lòng nhập mã và tên khách hàng.');
+    if (customers.some(x => x.id !== id && x.code.toLowerCase() === c.code.trim().toLowerCase())) return fail('Mã đã được sử dụng. Vui lòng chọn mã khác.');
+    const old = customers.find(x => x.id === id);
+    setCustomers(prev => prev.map(x => x.id === id ? { ...x, ...c, code: c.code.trim(), name: c.name.trim() } : x));
+    // Tên khách hàng hiển thị trên dự án cũng cập nhật theo
+    setProjects(prev => prev.map(p => p.clientId === id ? { ...p, clientName: c.name.trim(), client: c.name.trim() } : p));
+    logAudit('DIEU_CHINH', 'Khách hàng', id, undefined, { ma: old?.code, ten: old?.name }, { ma: c.code, ten: c.name });
+    return ok(`Đã lưu khách hàng ${c.name.trim()}.`);
+  };
+
+  // ---------- Danh mục: Tổ đội, Chuyên môn, Loại hệ thống ----------
+  /** Thêm/sửa một mục danh mục có mã + tên; mã không trùng, không cho đổi mã khi sửa */
+  const saveCatalogItem = <T extends { id: string; code: string; name: string }>(
+    list: T[], setList: React.Dispatch<React.SetStateAction<T[]>>, label: string, data: Omit<T, 'id'>, editId?: string
+  ): OpResult => {
+    const lower = label.toLowerCase();
+    if (!data.code.trim()) return fail(`Vui lòng nhập mã ${lower}.`);
+    if (!data.name.trim()) return fail(`Vui lòng nhập tên ${lower}.`);
+    if (list.some(x => x.id !== editId && x.code.toLowerCase() === data.code.trim().toLowerCase())) return fail('Mã đã được sử dụng. Vui lòng chọn mã khác.');
+    if (list.some(x => x.id !== editId && x.name.trim().toLowerCase() === data.name.trim().toLowerCase())) return fail(`Tên ${lower} đã tồn tại.`);
+    if (editId) {
+      const old = list.find(x => x.id === editId);
+      setList(prev => prev.map(x => x.id === editId ? { ...x, ...data, code: x.code, name: data.name.trim() } : x));
+      logAudit('DIEU_CHINH', label, editId, undefined, { ten: old?.name }, { ten: data.name });
+      return ok(`Đã lưu ${lower} ${data.name.trim()}.`);
+    }
+    const created = { ...data, code: data.code.trim(), name: data.name.trim(), id: newId() } as T;
+    setList(prev => [...prev, created]);
+    logAudit('TAO_MOI', label, created.id, undefined, null, { ma: created.code, ten: created.name });
+    return ok(`Đã thêm ${lower} ${created.name}.`);
+  };
+  const saveTeam = (data: Omit<Team, 'id'>, editId?: string) => {
+    const r = saveCatalogItem(teams, setTeams, 'Tổ đội', data, editId);
+    // Đổi tên tổ đội thì tên đội trên hồ sơ nhân sự đổi theo
+    if (r.ok && editId) setStaff(prev => prev.map(s => s.teamId === editId ? { ...s, teamName: data.name.trim() } : s));
+    return r;
+  };
+  const saveSkill = (data: Omit<SkillCatalog, 'id'>, editId?: string) => saveCatalogItem(skills, setSkills, 'Chuyên môn', data, editId);
+  const saveSystemType = (data: Omit<SystemType, 'id'>, editId?: string) => {
+    const r = saveCatalogItem(systemTypes, setSystemTypes, 'Loại hệ thống', data, editId);
+    if (r.ok && editId) setCategories(prev => prev.map(c => c.systemTypeId === editId ? { ...c, systemTypeName: data.name.trim() } : c));
+    return r;
   };
 
   // ---------- Dự án (MH-02, MH-07, MH-08) ----------
@@ -977,6 +1037,7 @@ const useStoreState = () => {
     // tiện ích
     dbMode, syncError, setCurrentUser, loadFromDatabase, findConflicts, getAffectedAssignments, isTaskAssignedToMe, queryTime,
     // nghiệp vụ
+    teams, skills, systemTypes, saveTeam, saveSkill, saveSystemType, updateCustomer,
     addCustomer, createProject, updateProject, changeProjectStatus,
     saveCategory, saveTask, changeTaskStatus,
     createAssignments, updateAssignment, cancelAssignment, replaceAssignmentStaff, deferAffectedAssignments,

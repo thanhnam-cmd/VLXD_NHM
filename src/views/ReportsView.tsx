@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { ExternalTeamReport } from './ExternalTeamReport.tsx';
 import { Project, Task, Assignment, StaffLeave, Staff, UserAccount, WorkLog } from '../types/index.ts';
 import { DEMO_QUERY_TIME, UPCOMING_DAYS, isTaskOverdue, isTaskUpcoming7Days } from '../utils/progressCalculator.ts';
 import { formatDate, formatDateTime, overlaps, daysBetween, toTime, PROJECT_STATUS_LABEL, TASK_STATUS_LABEL } from '../utils/domain.ts';
@@ -22,10 +23,17 @@ interface ReportsViewProps {
   leaves: StaffLeave[];
   workLogs: WorkLog[];
   currentUser: UserAccount;
-  initialTab?: 'BC-01' | 'BC-02' | 'BC-03';
+  initialTab?: 'BC-01' | 'BC-02' | 'BC-03' | 'BC-04';
   initialFilter?: string;
   onSelectProject?: (projectId: string, taskId?: string) => void;
 }
+
+const REPORT_TITLES = {
+  'BC-01': 'BC-01: Tình hình thực hiện dự án',
+  'BC-02': 'BC-02: Tình hình phân công nhân sự',
+  'BC-03': 'BC-03: Công việc quá hạn, sắp đến hạn',
+  'BC-04': 'BC-04: Tình hình thi công của đội thi công ngoài'
+} as const;
 
 export const ReportsView: React.FC<ReportsViewProps> = ({
   projects,
@@ -39,7 +47,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
   initialFilter = 'all',
   onSelectProject
 }) => {
-  const [selectedReport, setSelectedReport] = useState<'BC-01' | 'BC-02' | 'BC-03'>(initialTab);
+  const [selectedReport, setSelectedReport] = useState<'BC-01' | 'BC-02' | 'BC-03' | 'BC-04'>(initialTab);
   
   // BC-01 Filters
   const [bc1Project, setBc1Project] = useState<string>('all');
@@ -134,19 +142,24 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
       {/* 1. Tiêu đề trang & Thanh chuyển Báo cáo (MH-14 Thành phần 1) */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-2 border-b border-slate-200">
         <div>
-          <h1 className="text-xl font-bold text-[#0D1A36] tracking-tight">
+          <div className="hidden print:block text-[10px] text-slate-600 mb-1">CÔNG TY NMH · HỆ THỐNG QUẢN LÝ DỰ ÁN &amp; PHÂN CÔNG THI CÔNG ĐIỆN NHẸ</div>
+          <h1 className="text-xl font-bold text-[#0D1A36] tracking-tight print:hidden">
             Báo cáo và thống kê
+          </h1>
+          <h1 className="hidden print:block text-lg font-bold text-[#0D1A36] uppercase">
+            {REPORT_TITLES[selectedReport]}
           </h1>
           <div className="text-xs text-slate-500 mt-0.5">
             Thời điểm tra cứu: <strong>{queryLabel}</strong> · Bộ lọc: {
               selectedReport === 'BC-01' ? [bc1Project !== 'all' ? projects.find(p => p.id === bc1Project)?.code : 'Tất cả dự án', bc1Status !== 'all' ? PROJECT_STATUS_LABEL[bc1Status] : null, bc1From || bc1To ? `${formatDate(bc1From) || '…'} – ${formatDate(bc1To) || '…'}` : null].filter(Boolean).join(', ')
               : selectedReport === 'BC-02' ? `${formatDate(bc2From)} – ${formatDate(bc2To)}, ${bc2Status === 'HIEU_LUC' ? 'Hiệu lực' : bc2Status === 'HUY' ? 'Đã hủy' : 'Tất cả'}`
+              : selectedReport === 'BC-04' ? 'xem bên dưới'
               : bc3Group === 'both' ? 'Cả hai' : bc3Group === 'overdue' ? 'Quá hạn' : 'Sắp đến hạn'
             }
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 print:hidden">
           {/* Nút In báo cáo (QC-10 & MH-14) */}
           <button
             type="button"
@@ -160,7 +173,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
       </div>
 
       {/* 2. Ba Tab chọn Báo cáo (BC-01, BC-02, BC-03) */}
-      <div className="flex items-center gap-2 border-b border-slate-200">
+      <div className="flex items-center gap-2 border-b border-slate-200 overflow-x-auto print:hidden">
         <button
           type="button"
           onClick={() => setSelectedReport('BC-01')}
@@ -194,7 +207,20 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
         >
           BC-03 Quá hạn, sắp đến hạn
         </button>
+        <button
+          type="button"
+          onClick={() => setSelectedReport('BC-04')}
+          className={`px-4 py-2 text-xs font-semibold border-b-2 transition-all cursor-pointer whitespace-nowrap ${
+            selectedReport === 'BC-04'
+              ? 'border-blue-600 text-blue-700 font-bold'
+              : 'border-transparent text-slate-500 hover:text-slate-800'
+          }`}
+        >
+          BC-04 Đội thi công ngoài
+        </button>
       </div>
+
+      {selectedReport === 'BC-04' && <ExternalTeamReport onSelectProject={onSelectProject} />}
 
       {/* ======================================================== */}
       {/* NỘI DUNG BÁO CÁO BC-01: TÌNH HÌNH THỰC HIỆN DỰ ÁN */}
@@ -202,7 +228,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
       {selectedReport === 'BC-01' && (
         <div className="space-y-4 animate-in fade-in duration-150">
           {/* Bộ lọc BC-01 */}
-          <div className="p-3 bg-white rounded-xl border border-slate-200 shadow-2xs flex flex-wrap items-center gap-3 text-xs">
+          <div className="p-3 bg-white rounded-xl border border-slate-200 shadow-2xs flex flex-wrap items-center gap-3 text-xs print:hidden">
             <div className="flex items-center gap-2">
               <span className="text-slate-500 font-medium">Dự án:</span>
               <select
@@ -283,7 +309,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
 
           {/* Bảng kết quả BC-01 (Hình 3.36) */}
           <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-2xs">
-            <div className="overflow-x-auto">
+            <div className="overflow-x-auto print:overflow-visible">
               <table className="w-full text-left text-xs">
                 <thead className="bg-slate-50 text-slate-600 border-b border-slate-200 font-semibold text-[11px]">
                   <tr>
@@ -398,7 +424,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
       {selectedReport === 'BC-02' && (
         <div className="space-y-4 animate-in fade-in duration-150">
           {/* Bộ lọc BC-02 */}
-          <div className="p-3 bg-white rounded-xl border border-slate-200 shadow-2xs flex flex-wrap items-center gap-3 text-xs">
+          <div className="p-3 bg-white rounded-xl border border-slate-200 shadow-2xs flex flex-wrap items-center gap-3 text-xs print:hidden">
             <div className="flex items-center gap-2">
               <span className="text-slate-500 font-medium">Khoảng thời gian <span className="text-red-500">(*)</span>:</span>
               <input type="date" value={bc2From} onChange={(e) => setBc2From(e.target.value)} className="px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg font-mono" />
@@ -466,7 +492,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
 
           {/* Bảng phân công chi tiết BC-02 */}
           <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-2xs">
-            <div className="overflow-x-auto">
+            <div className="overflow-x-auto print:overflow-visible">
               <table className="w-full text-left text-xs">
                 <thead className="bg-slate-50 text-slate-600 border-b border-slate-200 font-semibold text-[11px]">
                   <tr>
@@ -550,7 +576,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
       {selectedReport === 'BC-03' && (
         <div className="space-y-4 animate-in fade-in duration-150">
           {/* Bộ lọc BC-03 */}
-          <div className="p-3 bg-white rounded-xl border border-slate-200 shadow-2xs flex flex-wrap items-center gap-3 text-xs">
+          <div className="p-3 bg-white rounded-xl border border-slate-200 shadow-2xs flex flex-wrap items-center gap-3 text-xs print:hidden">
             <div className="flex items-center gap-2">
               <span className="text-slate-500 font-medium">Nhóm công việc:</span>
               <select
@@ -613,7 +639,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
 
           {/* Bảng công việc quá hạn / sắp đến hạn BC-03 */}
           <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-2xs">
-            <div className="overflow-x-auto">
+            <div className="overflow-x-auto print:overflow-visible">
               <table className="w-full text-left text-xs">
                 <thead className="bg-slate-50 text-slate-600 border-b border-slate-200 font-semibold text-[11px]">
                   <tr>

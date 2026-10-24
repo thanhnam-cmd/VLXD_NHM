@@ -2,13 +2,13 @@ import React, { useState } from 'react';
 import type { Category, Project, Task, TaskStatus } from '../types/index.ts';
 import { useStore } from '../state/store.tsx';
 import { Modal, Label, Hint, ErrorBox, inputCls, btnPrimary, btnSecondary, btnDanger } from './ui.tsx';
-import { SYSTEM_TYPES, nextCode, toDbDateTime, formatDate } from '../utils/domain.ts';
+import { nextCode, toDbDateTime, formatDate } from '../utils/domain.ts';
 
 /** Hộp thoại Thêm hạng mục / Sửa hạng mục (MH-08c, Hình 3.22) */
 export const CategoryFormModal: React.FC<{ project: Project; category?: Category; onClose: () => void; onSaved: (msg: string) => void }> = ({
   project, category, onClose, onSaved
 }) => {
-  const { categories, saveCategory } = useStore();
+  const { categories, saveCategory, systemTypes } = useStore();
   const projCats = categories.filter(c => c.projectId === project.id);
   const isEdit = !!category;
   const [code, setCode] = useState(category?.code || nextCode(projCats.map(c => c.code), 'HM', 2));
@@ -24,7 +24,7 @@ export const CategoryFormModal: React.FC<{ project: Project; category?: Category
       projectId: project.id,
       code: code.trim(),
       name: name.trim(),
-      systemTypeId: String(SYSTEM_TYPES.indexOf(systemType) + 1),
+      systemTypeId: systemTypes.find(s => s.name === systemType)?.id || '',
       systemTypeName: systemType,
       orderNum: order,
       description: desc.trim()
@@ -63,7 +63,7 @@ export const CategoryFormModal: React.FC<{ project: Project; category?: Category
         <Label required>Loại hệ thống</Label>
         <select value={systemType} onChange={e => setSystemType(e.target.value)} className={inputCls}>
           <option value="">-- Chọn loại hệ thống --</option>
-          {SYSTEM_TYPES.map(s => <option key={s} value={s}>{s}</option>)}
+          {systemTypes.map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
         </select>
       </div>
       <div>

@@ -21,6 +21,8 @@ import {
 } from 'lucide-react';
 import { DatabaseStatus, dbService } from '../services/db.ts';
 import { DEMO_QUERY_TIME } from '../utils/progressCalculator.ts';
+import { useStore } from '../state/store.tsx';
+import { formatDateTime } from '../utils/domain.ts';
 
 interface HeaderProps {
   currentUser: UserAccount;
@@ -46,6 +48,7 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenNotifications,
   onOpenSearch
 }) => {
+  const { config } = useStore();
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const [isChangePasswordOpen, setIsChangePasswordOpen] = useState(false);
   const [currentPw, setCurrentPw] = useState('');
@@ -150,7 +153,7 @@ export const Header: React.FC<HeaderProps> = ({
   };
 
   return (
-    <header className="sticky top-0 z-30 bg-white/95 backdrop-blur-md border-b border-slate-200 px-3 sm:px-6 py-2 shadow-xs transition-all">
+    <header className="print:hidden sticky top-0 z-30 bg-white/95 backdrop-blur-md border-b border-slate-200 px-3 sm:px-6 py-2 shadow-xs transition-all">
       <div className="max-w-[1700px] mx-auto flex items-center justify-between gap-3 sm:gap-4">
         {/* Left Section: Company Brand Logo & Subtitle */}
         <div className="flex items-center gap-2.5 sm:gap-3.5 shrink-0">
@@ -202,13 +205,15 @@ export const Header: React.FC<HeaderProps> = ({
             </button>
           )}
 
-          {/* Mốc Tra cứu (Cố định 12/10/2026 09:00 theo đặc tả) */}
-          <div 
-            className="hidden xl:flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-slate-100 text-slate-700 border border-slate-200 text-[11px] font-mono"
-            title="Mốc thời gian tra cứu hệ thống tính hạn (bảng cau_hinh: THOI_DIEM_TRA_CUU)"
+          {/* Thời điểm tra cứu (QC-05): theo khóa THOI_DIEM_TRA_CUU, để trống thì dùng giờ thực */}
+          <div
+            className="hidden xl:flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-slate-100 text-slate-700 border border-slate-200 text-[11px]"
+            title={config.evaluationTimestamp
+              ? 'Mốc tính quá hạn, sắp đến hạn được cố định trong Cấu hình (THOI_DIEM_TRA_CUU). Để trống tham số này để dùng giờ thực.'
+              : 'Đang dùng giờ thực để tính quá hạn, sắp đến hạn.'}
           >
             <Clock className="w-3 h-3 text-slate-500" />
-            <span>Tra cứu: <strong>{DEMO_QUERY_TIME}</strong></span>
+            <span>Thời điểm tra cứu: <strong className="font-mono">{formatDateTime(DEMO_QUERY_TIME)}</strong>{!config.evaluationTimestamp && ' (giờ thực)'}</span>
           </div>
 
           {/* Chuông cảnh báo COM-01 (Quản lý, Đội trưởng) */}
