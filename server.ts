@@ -18,6 +18,8 @@ app.use(express.json({ limit: '60mb' }));
 // Initialize PostgreSQL Pool if DATABASE_URL is configured (e.g. on Render)
 const databaseUrl = process.env.DATABASE_URL;
 let pool: pg.Pool | null = null;
+// Lỗi nâng cấp cấu trúc gần nhất (hiển thị ở /api/database/status để kiểm tra trên Render)
+let schemaError: string | null = null;
 
 if (databaseUrl) {
   try {
@@ -72,6 +74,7 @@ app.get('/api/database/status', async (req, res) => {
     
     const tableNames = tablesCheck.rows.map(r => r.table_name);
     const hasCoreTables = tableNames.includes('du_an') && tableNames.includes('nhan_su') && tableNames.includes('cong_viec');
+    const upgrades = tableNames.includes('moc_nang_cap') ? (await client.query('SELECT khoa FROM moc_nang_cap ORDER BY khoa')).rows.map(r => r.khoa) : [];
 
     let rowCount = 0;
     if (hasCoreTables) {
@@ -90,6 +93,8 @@ app.get('/api/database/status', async (req, res) => {
       serverTime: result.rows[0].now,
       tablesCount: tableNames.length,
       hasCoreTables,
+      schemaError,
+      upgrades,
       tableNames,
       totalCoreRows: rowCount,
       mode: 'Real PostgreSQL (Render / Remote Database)'
@@ -457,7 +462,7 @@ async function startServer() {
   // Check and auto-initialize database tables if empty
   await autoInitDatabaseIfEmpty();
   if (pool) {
-    await ensureSchemaExtensions(pool).catch(err => console.error('[PostgreSQL] Schema extension error:', err.message));
+    await ensureSchemaExtensions(pool).then(() => { schemaError = null; }).catch(err => { schemaError = err.message; console.error('[PostgreSQL] Schema extension error:', err.message); });
   }
   if (!isProd) {
     // Development mode: mount Vite dev middleware
