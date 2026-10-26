@@ -64,3 +64,8 @@
   .min-h-screen, .h-screen { min-height: 0 !important; height: auto !important; }
   .overflow-hidden, .overflow-auto, .overflow-y-auto { overflow: visible !important; }
 }
+
+/* Thanh cuộn của menu bên trái (nền xanh đậm) */
+.sidebar-scroll { scrollbar-width: thin; scrollbar-color: rgba(255,255,255,.25) transparent; }
+.sidebar-scroll::-webkit-scrollbar { width: 6px; }
+.sidebar-scroll::-webkit-scrollbar-thumb { background: rgba(255,255,255,.25); border-radius: 3px; }

@@ -36,10 +36,10 @@ export const StatCard: React.FC<{ label: string; value: React.ReactNode; unit?: 
 
 /** Ô lọc: nhãn ở trên, điều khiển ở dưới */
 export const Field: React.FC<{ label: string; required?: boolean; children: React.ReactNode; className?: string }> = ({ label, required, children, className = '' }) => (
-  <label className={`flex flex-col gap-1 text-xs ${className}`}>
+  <div className={`flex flex-col gap-1 text-xs min-w-0 ${className}`}>
     <span className="font-semibold text-slate-600">{label}{required && <span className="text-red-500"> (*)</span>}</span>
     {children}
-  </label>
+  </div>
 );
 export const filterBoxCls = 'p-3 bg-white rounded-xl border border-slate-300 shadow-2xs flex flex-wrap items-end gap-3 print:hidden';
 export const ctlCls = 'px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-[#152A55]/30';

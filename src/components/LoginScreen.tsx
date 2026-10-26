@@ -26,8 +26,8 @@ interface LoginScreenProps {
 }
 
 export const LoginScreen: React.FC<LoginScreenProps> = ({ accounts = INITIAL_ACCOUNTS, onLogin }) => {
-  const [username, setUsername] = useState<string>('qly.bao');
-  const [password, setPassword] = useState<string>('Nmh@2026');
+  const [username, setUsername] = useState<string>('');
+  const [password, setPassword] = useState<string>('');
   const [showPassword, setShowPassword] = useState<boolean>(false);
   const [remember, setRemember] = useState<boolean>(true);
   const [isLoading, setIsLoading] = useState<boolean>(false);
@@ -172,7 +172,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ accounts = INITIAL_ACC
                   setErrorMessage(null);
                   setIsLockedModal(null);
                 }}
-                placeholder="vd: admin, qly.bao, dt.cuong, gd.minh..."
+                placeholder="Nhập tên đăng nhập" autoComplete="username"
                 className="w-full pl-9 pr-3 py-2.5 bg-slate-50 border border-slate-300 rounded-lg text-slate-900 font-medium focus:ring-2 focus:ring-[#152A55] focus:bg-white focus:outline-none transition-all"
               />
             </div>
@@ -183,9 +183,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ accounts = INITIAL_ACC
               <label className="block text-slate-700 font-semibold">
                 Mật khẩu <span className="text-red-500">*</span>
               </label>
-              <span className="text-[10px] text-slate-500 font-mono">
-                Mặc định: <strong>Nmh@2026</strong>
-              </span>
+
             </div>
             <div className="relative">
               <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
@@ -250,63 +248,10 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ accounts = INITIAL_ACC
           </button>
         </form>
 
-        {/* Quick Demo Accounts Selection Box (KB01 / KB02) */}
-        <div className="pt-2 border-t border-slate-200 space-y-2">
-          <div className="flex items-center justify-between">
-            <label className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
-              Chọn nhanh tài khoản thử nghiệm (9 tài khoản CSDL)
-            </label>
-            <span className="text-[10px] text-blue-600 font-medium">1 chạm điền mẫu</span>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 max-h-48 overflow-y-auto p-1.5 border border-slate-200 rounded-xl bg-slate-50/70 text-xs">
-            {accounts.map((acc) => {
-              const badge = getRoleBadge(acc.role);
-              const isSelected = username === acc.username;
-
-              return (
-                <button
-                  key={acc.id}
-                  type="button"
-                  onClick={() => handleSelectQuickAccount(acc)}
-                  className={`p-2 rounded-lg border text-left transition-all cursor-pointer flex items-center justify-between gap-1.5 ${
-                    isSelected
-                      ? 'bg-white border-[#152A55] shadow-xs ring-1 ring-[#152A55]'
-                      : 'bg-white/80 border-slate-200 hover:border-slate-300 hover:bg-white'
-                  }`}
-                >
-                  <div className="min-w-0 flex-1 leading-tight">
-                    <div className="flex items-center gap-1">
-                      <span className="font-bold text-[11px] text-slate-900 truncate">
-                        {acc.name}
-                      </span>
-                      {isSelected && (
-                        <CheckCircle2 className="w-3 h-3 text-emerald-600 shrink-0" />
-                      )}
-                      {!acc.isActive && (
-                        <span className="text-[9px] px-1 py-0.2 rounded bg-red-100 text-red-700 font-bold">Khóa</span>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-1 text-[10px] text-slate-500 mt-0.5">
-                      <span className="font-mono text-slate-600 font-medium">@{acc.username}</span>
-                      <span>·</span>
-                      <span className="truncate">{badge.label}</span>
-                    </div>
-                  </div>
-
-                  <span className={`text-[9px] px-1.5 py-0.5 rounded-full border shrink-0 ${badge.badgeClass}`}>
-                    {badge.icon}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
         {/* Footer Subtext */}
         <div className="text-center pt-1">
           <p className="text-[11px] text-slate-400">
-            Hệ thống nội bộ NMH LLC · CSDL PostgreSQL VLXD · Mật khẩu chung: <code className="font-mono text-slate-600 font-bold">Nmh@2026</code>
+            Hệ thống nội bộ Công ty TNHH Đầu tư và Phát triển NMH
           </p>
         </div>
       </div>
@@ -338,9 +283,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ accounts = INITIAL_ACC
                 <div>📞 <strong>Hotline IT nội bộ:</strong> 0900 000 101</div>
                 <div>✉️ <strong>Email hỗ trợ:</strong> it.support@nmh.vn</div>
               </div>
-              <p className="text-[11px] text-slate-500">
-                (Mẹo: Bạn có thể đăng nhập bằng tài khoản <strong>admin</strong> với mật khẩu <strong>Nmh@2026</strong> để tự đặt lại mật khẩu cho bất kỳ tài khoản nào tại mục AD-02).
-              </p>
+
             </div>
 
             <button

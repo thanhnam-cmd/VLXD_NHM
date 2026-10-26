@@ -113,8 +113,8 @@ export const ExternalTeamReport: React.FC<{ onSelectProject?: (projectId: string
               <button key={k} type="button" onClick={() => setPreset(k)} className="px-2.5 py-1.5 rounded-lg border border-slate-300 text-[11px] font-semibold hover:bg-slate-50 cursor-pointer">{l}</button>
             ))}
           </div>
-          <Field label="Đơn vị thi công" className="w-56"><SearchSelect value={fTeam} onChange={setFTeam} allLabel="Tất cả đơn vị" options={subcontractors.map(s => ({ value: s.id, label: s.companyName, sub: s.area }))} className={ctlCls} /></Field>
-          <Field label="Dự án" className="w-56"><SearchSelect value={fProject} onChange={setFProject} allLabel="Tất cả dự án" options={visibleProjects.map(p => ({ value: p.id, label: `${p.code} – ${p.name}` }))} className={ctlCls} /></Field>
+          <Field label="Đơn vị thi công" className="w-56"><SearchSelect value={fTeam} onChange={setFTeam} allLabel="Tất cả đơn vị" options={subcontractors.map(s => ({ value: s.id, label: s.companyName, sub: s.area }))} className={`${ctlCls} w-full`} /></Field>
+          <Field label="Dự án" className="w-56"><SearchSelect value={fProject} onChange={setFProject} allLabel="Tất cả dự án" options={visibleProjects.map(p => ({ value: p.id, label: `${p.code} – ${p.name}` }))} className={`${ctlCls} w-full`} /></Field>
           <Field label="Tình trạng">
             <select value={fState} onChange={e => setFState(e.target.value)} className={ctlCls}>
               <option value="ACTIVE">Tất cả (trừ đã hủy)</option><option value="SAP">Sắp triển khai</option><option value="DANG">Đang triển khai</option>

@@ -2,8 +2,16 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { CalendarDays, ChevronDown, Search, X } from 'lucide-react';
 
 const pad = (n: number) => String(n).padStart(2, '0');
-// Lớp độ rộng cố định (w-36, w-[200px]…): khi có thì khung bọc không giãn hết chiều ngang
-const FIXED_W = /\bw-(\d|\[|auto|fit|max|min)/;
+/**
+ * Tách lớp độ rộng (w-full, w-36, sm:w-48…) khỏi className: độ rộng đặt cho khung bọc, ô nhập luôn w-full bên trong.
+ * Không ghi độ rộng thì dùng độ rộng mặc định gọn (dùng trong thanh lọc), tránh ô tự giãn hết dòng.
+ */
+const splitWidth = (className: string, fallback: string) => {
+  const tokens = className.split(/\s+/).filter(Boolean);
+  const isW = (t: string) => /^([a-z0-9]+:)*(min-|max-)?w-/.test(t);
+  const w = tokens.filter(isW);
+  return { wrap: w.length ? w.join(' ') : fallback, input: tokens.filter(t => !isW(t)).join(' ') + ' w-full' };
+};
 const isoToVn = (iso: string) => (/^\d{4}-\d{2}-\d{2}$/.test(iso) ? `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(0, 4)}` : '');
 const vnToIso = (vn: string) => {
   const m = vn.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
@@ -57,13 +65,14 @@ export const DateInput: React.FC<DateInputProps> = ({ value, onChange, className
     try { el.showPicker ? el.showPicker() : el.click(); } catch { el.click(); }
   };
 
+  const cw = splitWidth(className, 'w-[150px] shrink-0');
   return (
-    <div className={`relative inline-flex items-center ${FIXED_W.test(className) ? '' : 'w-full'}`} title={title}>
+    <div className={`relative inline-flex items-center ${cw.wrap}`} title={title}>
       <input
         type="text" inputMode="numeric" value={text} disabled={disabled} placeholder={placeholder}
         onChange={e => onType(e.target.value)} onBlur={e => commit(e.target.value)}
         onKeyDown={e => { if (e.key === 'Enter') commit((e.target as HTMLInputElement).value); }}
-        className={`${className} font-mono pr-8 ${bad ? '!border-red-400 !bg-red-50' : ''}`}
+        className={`${cw.input} font-mono pr-8 ${bad ? '!border-red-400 !bg-red-50' : ''}`}
       />
       <button type="button" tabIndex={-1} disabled={disabled} onClick={openPicker} title="Chọn ngày trên lịch"
         className="absolute right-1.5 p-1 text-slate-400 hover:text-[#152A55] cursor-pointer disabled:opacity-40">
@@ -108,9 +117,10 @@ export const SearchSelect: React.FC<{
     return options.filter(o => !k || norm(`${o.label} ${o.sub || ''}`).includes(k));
   }, [options, q]);
   const pick = (v: string) => { onChange(v); setOpen(false); setQ(''); };
+  const cw = splitWidth(className, 'w-56 shrink-0');
 
   return (
-    <div ref={boxRef} className={`relative ${FIXED_W.test(className) ? '' : 'w-full'}`}>
+    <div ref={boxRef} className={`relative ${cw.wrap}`}>
       <div className="relative">
         <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
         <input
@@ -123,7 +133,7 @@ export const SearchSelect: React.FC<{
             if (e.key === 'Escape') { setOpen(false); setQ(''); }
             if (e.key === 'Enter' && list.length > 0) { e.preventDefault(); pick(list[0].value); }
           }}
-          className={`${className} pl-8 pr-12 truncate`}
+          className={`${cw.input} pl-8 pr-12 truncate`}
         />
         {value && allLabel !== undefined && !disabled && (
           <button type="button" tabIndex={-1} title="Bỏ chọn" onClick={() => pick('')} className="absolute right-7 top-1/2 -translate-y-1/2 p-0.5 text-slate-400 hover:text-red-600 cursor-pointer"><X className="w-3.5 h-3.5" /></button>

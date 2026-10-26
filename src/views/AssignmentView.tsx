@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { DateInput, SearchSelect } from '../components/inputs.tsx';
+import { Field, ctlCls } from '../components/reportKit.tsx';
 import { Assignment, StaffLeave, Staff } from '../types/index.ts';
 import { useStore } from '../state/store.tsx';
 import { DEMO_QUERY_TIME } from '../utils/progressCalculator.ts';
@@ -502,19 +503,25 @@ export const AssignmentView: React.FC<AssignmentViewProps> = ({ initialTab, init
 
           {/* 12. Bộ lọc lịch phân công & 13. Bảng phân công */}
           <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-xs space-y-3">
-            <div className="flex flex-wrap gap-2 items-center text-xs">
-              <SearchSelect value={fProject} onChange={setFProject} allLabel="Mọi dự án" className="w-52 px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg"
-                options={visibleProjects.map(p => ({ value: p.id, label: `${p.code} – ${p.name}` }))} />
-              <SearchSelect value={fStaff} onChange={setFStaff} allLabel="Mọi nhân sự" className="w-52 px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg"
-                options={staff.map(s => ({ value: s.id, label: s.name, sub: s.roleTitleDisplay }))} />
-              <DateInput value={fFrom} onChange={e => setFFrom(e.target.value)} className="px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg font-mono" />
-              <DateInput value={fTo} onChange={e => setFTo(e.target.value)} className="px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg font-mono" />
-              <select value={fStatus} onChange={e => setFStatus(e.target.value as any)} className="px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg">
-                <option value="HIEU_LUC">Hiệu lực</option>
-                <option value="HUY">Đã hủy</option>
-                <option value="all">Tất cả</option>
-              </select>
-              <div className="ml-auto flex bg-slate-100 p-0.5 rounded-lg border border-slate-200">
+            <div className="flex flex-wrap gap-2.5 items-end text-xs p-3 rounded-xl bg-slate-50 border border-slate-200">
+              <Field label="Dự án" className="w-full sm:w-56">
+                <SearchSelect value={fProject} onChange={setFProject} allLabel="Mọi dự án" className={`${ctlCls} w-full`}
+                  options={visibleProjects.map(p => ({ value: p.id, label: `${p.code} – ${p.name}` }))} />
+              </Field>
+              <Field label="Nhân sự" className="w-full sm:w-52">
+                <SearchSelect value={fStaff} onChange={setFStaff} allLabel="Mọi nhân sự" className={`${ctlCls} w-full`}
+                  options={staff.map(s => ({ value: s.id, label: s.name, sub: s.roleTitleDisplay }))} />
+              </Field>
+              <Field label="Từ ngày" className="w-[calc(50%-5px)] sm:w-auto"><DateInput value={fFrom} onChange={e => { setFFrom(e.target.value); }} className={`${ctlCls} w-full sm:w-[140px]`} /></Field>
+              <Field label="Đến ngày" className="w-[calc(50%-5px)] sm:w-auto"><DateInput value={fTo} onChange={e => { setFTo(e.target.value); }} className={`${ctlCls} w-full sm:w-[140px]`} /></Field>
+              <Field label="Trạng thái" className="w-full sm:w-auto">
+                <select value={fStatus} onChange={e => setFStatus(e.target.value as any)} className={`${ctlCls} w-full`}>
+                  <option value="HIEU_LUC">Hiệu lực</option>
+                  <option value="HUY">Đã hủy</option>
+                  <option value="all">Tất cả</option>
+                </select>
+              </Field>
+              <div className="ml-auto flex bg-white p-0.5 rounded-lg border border-slate-200">
                 <button type="button" onClick={() => setViewMode('list')} className={`px-2.5 py-1 rounded-md cursor-pointer ${viewMode === 'list' ? 'bg-white font-semibold shadow-xs' : ''}`}>Danh sách</button>
                 <button type="button" onClick={() => setViewMode('week')} className={`px-2.5 py-1 rounded-md cursor-pointer ${viewMode === 'week' ? 'bg-white font-semibold shadow-xs' : ''}`}>Lịch tuần</button>
               </div>
@@ -606,21 +613,25 @@ export const AssignmentView: React.FC<AssignmentViewProps> = ({ initialTab, init
       {/* ===================== MH-10 ===================== */}
       {activeSubTab === 'leaves' && (
         <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-xs space-y-4">
-          <div className="flex items-center justify-between pb-3 border-b border-slate-100 gap-3 flex-wrap">
-            <div className="flex flex-wrap gap-2 text-xs">
-              <SearchSelect value={lStaff} onChange={setLStaff} allLabel="Mọi nhân sự" className="w-52 px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg"
-                options={staff.map(s => ({ value: s.id, label: s.name, sub: s.roleTitleDisplay }))} />
-              <DateInput value={lFrom} onChange={e => setLFrom(e.target.value)} className="px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg font-mono" />
-              <DateInput value={lTo} onChange={e => setLTo(e.target.value)} className="px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg font-mono" />
-              <select value={lStatus} onChange={e => setLStatus(e.target.value as any)} className="px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg">
-                <option value="upcoming">Sắp tới và đang diễn ra</option>
-                <option value="past">Đã qua</option>
-                <option value="cancelled">Đã hủy</option>
-                <option value="all">Tất cả</option>
-              </select>
+          <div className="flex items-end justify-between p-3 rounded-xl bg-slate-50 border border-slate-200 gap-3 flex-wrap">
+            <div className="flex flex-wrap gap-2.5 items-end text-xs">
+              <Field label="Nhân sự" className="w-full sm:w-52">
+                <SearchSelect value={lStaff} onChange={setLStaff} allLabel="Mọi nhân sự" className={`${ctlCls} w-full`}
+                  options={staff.map(s => ({ value: s.id, label: s.name, sub: s.roleTitleDisplay }))} />
+              </Field>
+              <Field label="Từ ngày" className="w-[calc(50%-5px)] sm:w-auto"><DateInput value={lFrom} onChange={e => { setLFrom(e.target.value); }} className={`${ctlCls} w-full sm:w-[140px]`} /></Field>
+              <Field label="Đến ngày" className="w-[calc(50%-5px)] sm:w-auto"><DateInput value={lTo} onChange={e => { setLTo(e.target.value); }} className={`${ctlCls} w-full sm:w-[140px]`} /></Field>
+              <Field label="Tình trạng" className="w-full sm:w-auto">
+                <select value={lStatus} onChange={e => setLStatus(e.target.value as any)} className={`${ctlCls} w-full`}>
+                  <option value="upcoming">Sắp tới và đang diễn ra</option>
+                  <option value="past">Đã qua</option>
+                  <option value="cancelled">Đã hủy</option>
+                  <option value="all">Tất cả</option>
+                </select>
+              </Field>
               {onlyAffected && <button type="button" onClick={() => setOnlyAffected(false)} className="px-2.5 py-1.5 rounded-lg bg-red-50 text-red-700 border border-red-200 font-semibold cursor-pointer">Đang lọc: có phân công bị ảnh hưởng ✕</button>}
             </div>
-            <button onClick={() => setLeaveModal({})} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-[#152A55] text-white hover:bg-[#1E3A75] cursor-pointer">
+            <button onClick={() => setLeaveModal({})} className="inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-lg bg-[#152A55] text-white hover:bg-[#1E3A75] cursor-pointer w-full sm:w-auto">
               <Plus className="w-3.5 h-3.5" /> Ghi nhận lịch nghỉ mới
             </button>
           </div>
@@ -649,8 +660,8 @@ export const AssignmentView: React.FC<AssignmentViewProps> = ({ initialTab, init
                       </button>
                     )}
                   </div>
-                  <div className="flex items-center gap-3 shrink-0">
-                    <span className="font-mono text-slate-700">{formatDateTime(l.startDate)} – {formatDateTime(l.endDate)}</span>
+                  <div className="flex items-center gap-x-3 gap-y-1 flex-wrap min-w-0">
+                    <span className="font-mono text-slate-700 text-[11px] sm:text-xs">{formatDateTime(l.startDate)} – {formatDateTime(l.endDate)}</span>
                     {isRecordActive(l) && (
                       <>
                         <button onClick={() => setLeaveModal({ leave: l })} className="px-2 py-1 text-xs text-blue-700 hover:bg-blue-50 rounded font-semibold cursor-pointer">Sửa</button>

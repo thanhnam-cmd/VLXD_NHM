@@ -5,7 +5,9 @@ import { useStore } from '../state/store.tsx';
 import { DEMO_QUERY_TIME } from '../utils/progressCalculator.ts';
 import { formatDate, formatDateTime, toDbDateTime, toTime, daysBetween, isTaskOpen, isTeamLeadRole, canOperate, isDirectorRole } from '../utils/domain.ts';
 import { useToast, Modal, Drawer, Label, Hint, ErrorBox, inputCls, btnPrimary, btnSecondary, ConfirmDialog } from '../components/ui.tsx';
-import { Plus } from 'lucide-react';
+import { Plus, Search } from 'lucide-react';
+import { SearchSelect } from '../components/inputs.tsx';
+import { Field, ctlCls } from '../components/reportKit.tsx';
 
 export const externalState = (e: ExternalAssignment) => {
   if (e.status === 'HUY') return { key: 'HUY', label: 'Đã hủy', cls: 'bg-slate-300 text-slate-700' };
@@ -278,6 +280,10 @@ export const ExternalTeamsTab: React.FC = () => {
   const toast = useToast();
   const [fProject, setFProject] = useState('');
   const [fState, setFState] = useState('');
+  // Lọc theo đội khoán ngoài, kiểu giao (theo công việc / khoán theo dự án) và từ khóa
+  const [fTeam, setFTeam] = useState('');
+  const [fKind, setFKind] = useState('');
+  const [fText, setFText] = useState('');
   const [subModal, setSubModal] = useState<{ sub?: ExternalSubcontractor } | null>(null);
   const [assignModal, setAssignModal] = useState(false);
   const [detailId, setDetailId] = useState<string | null>(null);
@@ -288,8 +294,18 @@ export const ExternalTeamsTab: React.FC = () => {
     const pid = e.projectId || tasks.find(t => t.id === e.taskId)?.projectId;
     if (fProject && pid !== fProject) return false;
     if (fState && externalState(e).key !== fState) return false;
+    if (fTeam && e.contractorId !== fTeam) return false;
+    if (fKind === 'TASK' && !e.taskId) return false;
+    if (fKind === 'PROJECT' && e.taskId) return false;
+    if (fText.trim()) {
+      const t = tasks.find(x => x.id === e.taskId);
+      const p = visibleProjects.find(x => x.id === pid);
+      const hay = `${e.contractorName} ${e.workDescription} ${t?.code || ''} ${t?.title || ''} ${p?.code || ''} ${p?.name || ''}`.toLowerCase();
+      if (!hay.includes(fText.trim().toLowerCase())) return false;
+    }
     return true;
   });
+  const teamCount = (id: string) => scoped.externalAssignments.filter(e => e.contractorId === id && e.status === 'HIEU_LUC').length;
 
   return (
     <div className="space-y-4">
@@ -304,14 +320,14 @@ export const ExternalTeamsTab: React.FC = () => {
           )}
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs">
+          <table className="w-full text-left text-xs min-w-[640px]">
             <thead className="text-[10px] uppercase text-slate-500 border-b border-slate-200">
               <tr><th className="py-2 pr-3">Đơn vị</th><th className="py-2 pr-3">Đầu mối</th><th className="py-2 pr-3">Khu vực hoạt động</th><th className="py-2 pr-3">Hợp tác</th>{isManager && <th className="py-2 text-right">Thao tác</th>}</tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {subcontractors.map(s => (
                 <tr key={s.id}>
-                  <td className="py-2 pr-3"><div className="font-bold">{s.companyName}</div><div className="text-[10px] text-slate-500 font-mono">MST: {s.taxCode || '—'}</div></td>
+                  <td className="py-2 pr-3"><button type="button" onClick={() => setFTeam(fTeam === s.id ? '' : s.id)} title="Lọc phần việc của đội này" className={`font-bold text-left hover:underline cursor-pointer ${fTeam === s.id ? 'text-blue-700' : ''}`}>{s.companyName}</button><div className="text-[10px] text-slate-500 font-mono">MST: {s.taxCode || '—'} · {teamCount(s.id)} phần việc hiệu lực</div></td>
                   <td className="py-2 pr-3">{s.contactPerson}{s.contactTitle ? `, ${s.contactTitle}` : ''} · {s.phone}</td>
                   <td className="py-2 pr-3">{s.area}</td>
                   <td className="py-2 pr-3"><span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${s.status === 'HOP_TAC' ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-600'}`}>{s.status === 'HOP_TAC' ? 'Đang hợp tác' : 'Ngừng hợp tác'}</span></td>
@@ -325,23 +341,46 @@ export const ExternalTeamsTab: React.FC = () => {
 
       <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-xs space-y-3">
         <div className="flex items-center justify-between gap-2 flex-wrap">
-          <div className="flex gap-2 text-xs">
-            <select value={fProject} onChange={e => setFProject(e.target.value)} className="px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg">
-              <option value="">Mọi dự án</option>
-              {visibleProjects.map(p => <option key={p.id} value={p.id}>{p.code}</option>)}
+          <h3 className="text-sm font-bold text-[#0D1A36]">Phần việc giao đội thi công ngoài <span className="font-mono text-slate-500 font-normal">({exts.length})</span></h3>
+          {isManager && (
+            <button type="button" onClick={() => setAssignModal(true)} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-[#152A55] text-white hover:bg-[#1E3A75] cursor-pointer">
+              <Plus className="w-3.5 h-3.5" /> Giao phần việc
+            </button>
+          )}
+        </div>
+        <div className="flex flex-wrap gap-2.5 items-end text-xs p-3 rounded-xl bg-slate-50 border border-slate-200">
+          <Field label="Tìm kiếm" className="w-full sm:w-52">
+            <div className="relative">
+              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+              <input value={fText} onChange={e => setFText(e.target.value)} placeholder="Phần việc, công việc, dự án" className={`${ctlCls} w-full pl-8`} />
+            </div>
+          </Field>
+          <Field label="Đội khoán ngoài" className="w-full sm:w-60">
+            <SearchSelect value={fTeam} onChange={setFTeam} allLabel="Tất cả đội" className={`${ctlCls} w-full`}
+              options={subcontractors.map(sc => ({ value: sc.id, label: sc.companyName, sub: `${sc.status === 'HOP_TAC' ? 'Đang hợp tác' : 'Ngừng hợp tác'} · ${teamCount(sc.id)} phần việc hiệu lực` }))} />
+          </Field>
+          <Field label="Dự án" className="w-full sm:w-56">
+            <SearchSelect value={fProject} onChange={setFProject} allLabel="Mọi dự án" className={`${ctlCls} w-full`}
+              options={visibleProjects.map(p => ({ value: p.id, label: `${p.code} – ${p.name}` }))} />
+          </Field>
+          <Field label="Kiểu giao" className="w-[calc(50%-5px)] sm:w-auto">
+            <select value={fKind} onChange={e => setFKind(e.target.value)} className={`${ctlCls} w-full`}>
+              <option value="">Tất cả</option>
+              <option value="TASK">Theo công việc</option>
+              <option value="PROJECT">Khoán theo dự án</option>
             </select>
-            <select value={fState} onChange={e => setFState(e.target.value)} className="px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg">
-              <option value="">Tất cả tình trạng</option>
+          </Field>
+          <Field label="Tình trạng" className="w-[calc(50%-5px)] sm:w-auto">
+            <select value={fState} onChange={e => setFState(e.target.value)} className={`${ctlCls} w-full`}>
+              <option value="">Tất cả</option>
               <option value="SAP">Sắp triển khai</option>
               <option value="DANG">Đang triển khai</option>
               <option value="KET_THUC">Đã kết thúc</option>
               <option value="HUY">Đã hủy</option>
             </select>
-          </div>
-          {isManager && (
-            <button type="button" onClick={() => setAssignModal(true)} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-[#152A55] text-white hover:bg-[#1E3A75] cursor-pointer">
-              <Plus className="w-3.5 h-3.5" /> Giao phần việc
-            </button>
+          </Field>
+          {(fText || fTeam || fProject || fKind || fState) && (
+            <button type="button" onClick={() => { setFText(''); setFTeam(''); setFProject(''); setFKind(''); setFState(''); }} className="px-3 py-1.5 rounded-lg border border-slate-300 bg-white font-semibold hover:bg-slate-100 cursor-pointer">Xóa bộ lọc</button>
           )}
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">

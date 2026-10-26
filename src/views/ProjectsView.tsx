@@ -110,7 +110,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ initialStatus, onSel
           />
         </div>
 
-        <div className="flex items-center gap-2 w-full md:w-auto flex-wrap sm:flex-nowrap">
+        <div className="flex items-center gap-2 w-full md:w-auto flex-wrap xl:flex-nowrap">
           <select
             value={statusFilter}
             onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }}

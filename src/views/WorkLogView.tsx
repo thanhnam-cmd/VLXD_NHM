@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { DateInput } from '../components/inputs.tsx';
+import { DateInput, SearchSelect } from '../components/inputs.tsx';
+import { Field, ctlCls } from '../components/reportKit.tsx';
 import { WorkLog } from '../types/index.ts';
 import { useStore } from '../state/store.tsx';
 import { ClipboardCheck, Search } from 'lucide-react';
@@ -66,39 +67,42 @@ export const WorkLogView: React.FC<WorkLogViewProps> = ({ initialStatus, initial
   }).sort((a, b) => b.submittedAt.localeCompare(a.submittedAt));
 
   const filterBar = (
-    <div className="flex flex-wrap gap-2 text-xs items-center">
+    <div className="flex flex-wrap items-end gap-2.5 p-3 rounded-xl bg-slate-50 border border-slate-200">
       {!isLead && (
-        <div className="relative">
-          <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
-          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Tìm nội dung, tên công việc" className="pl-8 pr-3 py-1.5 bg-slate-50 border border-slate-300 rounded-lg w-56" />
-        </div>
+        <Field label="Tìm kiếm" className="w-full sm:w-56">
+          <div className="relative">
+            <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Nội dung, tên công việc" className={`${ctlCls} w-full pl-8`} />
+          </div>
+        </Field>
       )}
-      <select value={fProject} onChange={e => { setFProject(e.target.value); setFTask(''); }} className="px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg">
-        <option value="">Mọi dự án</option>
-        {visibleProjects.map(p => <option key={p.id} value={p.id}>{p.code}</option>)}
-      </select>
-      <select value={fTask} disabled={!fProject} onChange={e => setFTask(e.target.value)} className="px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg disabled:opacity-50">
-        <option value="">Mọi công việc</option>
-        {tasks.filter(t => t.projectId === fProject).map(t => <option key={t.id} value={t.id}>{t.code} · {t.title}</option>)}
-      </select>
+      <Field label="Dự án" className="w-full sm:w-52">
+        <SearchSelect value={fProject} onChange={v => { setFProject(v); setFTask(''); }} allLabel="Mọi dự án" className={`${ctlCls} w-full`}
+          options={visibleProjects.map(p => ({ value: p.id, label: `${p.code} – ${p.name}` }))} />
+      </Field>
+      <Field label="Công việc" className="w-full sm:w-52">
+        <SearchSelect value={fTask} onChange={setFTask} disabled={!fProject} allLabel="Mọi công việc" className={`${ctlCls} w-full`}
+          options={tasks.filter(t => t.projectId === fProject).map(t => ({ value: t.id, label: `${t.code} · ${t.title}` }))} />
+      </Field>
       {!isLead && (
         <>
-          <select value={fSender} onChange={e => setFSender(e.target.value)} className="px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg">
-            <option value="">Mọi người gửi</option>
-            {senders.map(s => <option key={s} value={s}>{s}</option>)}
-          </select>
-          <select value={fStatus} onChange={e => setFStatus(e.target.value)} className="px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg">
-            <option value="all">Tất cả</option>
-            <option value="pending">Chờ Quản lý xác nhận</option>
-            <option value="rework">Quản lý yêu cầu cập nhật lại</option>
-            <option value="confirmed">Quản lý đã xác nhận hoàn thành</option>
-            <option value="issues">Có vướng mắc</option>
-          </select>
+          <Field label="Người gửi" className="w-full sm:w-44">
+            <SearchSelect value={fSender} onChange={setFSender} allLabel="Mọi người gửi" className={`${ctlCls} w-full`} options={senders.map(s => ({ value: s, label: s }))} />
+          </Field>
+          <Field label="Tình trạng" className="w-full sm:w-auto">
+            <select value={fStatus} onChange={e => setFStatus(e.target.value)} className={`${ctlCls} w-full`}>
+              <option value="all">Tất cả</option>
+              <option value="pending">Chờ Quản lý xác nhận</option>
+              <option value="rework">Quản lý yêu cầu cập nhật lại</option>
+              <option value="confirmed">Quản lý đã xác nhận hoàn thành</option>
+              <option value="issues">Có vướng mắc</option>
+            </select>
+          </Field>
         </>
       )}
-      <DateInput value={fFrom} onChange={e => setFFrom(e.target.value)} className="px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg font-mono" />
-      <DateInput value={fTo} onChange={e => setFTo(e.target.value)} className="px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg font-mono" />
-      <span className="ml-auto text-xs font-mono font-bold px-2 py-0.5 rounded bg-slate-100 text-slate-700">{rows.length} bản ghi</span>
+      <Field label="Từ ngày" className="w-[calc(50%-5px)] sm:w-auto"><DateInput value={fFrom} onChange={e => setFFrom(e.target.value)} className={`${ctlCls} w-full sm:w-[140px]`} /></Field>
+      <Field label="Đến ngày" className="w-[calc(50%-5px)] sm:w-auto"><DateInput value={fTo} onChange={e => setFTo(e.target.value)} className={`${ctlCls} w-full sm:w-[140px]`} /></Field>
+      <span className="ml-auto self-center text-xs font-mono font-bold px-2 py-1 rounded bg-white border border-slate-200 text-slate-700">{rows.length} bản ghi</span>
     </div>
   );
 

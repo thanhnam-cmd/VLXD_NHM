@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { UserAccount, UserRole } from '../types/index.ts';
-import { 
+import {
+  Menu,
   LogOut, 
   ShieldCheck, 
   Briefcase, 
@@ -38,6 +39,7 @@ interface HeaderProps {
   notificationCount?: number;
   onOpenNotifications?: () => void;
   onOpenSearch?: () => void;
+  onOpenMenu?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -49,9 +51,10 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenDbModal,
   notificationCount = 0,
   onOpenNotifications,
-  onOpenSearch
+  onOpenSearch,
+  onOpenMenu
 }) => {
-  const { config, setQueryTime } = useStore();
+  const { config, setQueryTime, projects } = useStore();
   const [timeOpen, setTimeOpen] = useState(false);
   const [qtDate, setQtDate] = useState('');
   const [qtTime, setQtTime] = useState('');
@@ -128,6 +131,11 @@ export const Header: React.FC<HeaderProps> = ({
       <div className="max-w-[1700px] mx-auto flex items-center justify-between gap-3 sm:gap-4">
         {/* Left Section: Company Brand Logo & Subtitle */}
         <div className="flex items-center gap-2.5 sm:gap-3.5 shrink-0">
+          {onOpenMenu && (
+            <button type="button" onClick={onOpenMenu} aria-label="Mở menu" className="md:hidden p-1.5 -ml-1 rounded-lg text-[#152A55] hover:bg-slate-100 cursor-pointer">
+              <Menu className="w-5 h-5" />
+            </button>
+          )}
           <img 
             src="/image.png" 
             alt="NMH Logo" 
@@ -219,26 +227,6 @@ export const Header: React.FC<HeaderProps> = ({
             </button>
           )}
 
-          {/* Database Connection Pill */}
-          {onOpenDbModal && (
-            <button
-              type="button"
-              onClick={onOpenDbModal}
-              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[11px] font-medium transition-all cursor-pointer shadow-2xs ${
-                dbStatus?.connected
-                  ? 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100'
-                  : 'bg-slate-100 text-slate-700 border-slate-200 hover:bg-slate-200'
-              }`}
-              title="Xem cấu hình CSDL PostgreSQL & Triển khai Render"
-            >
-              <Database className="w-3.5 h-3.5 text-blue-600 shrink-0" />
-              <span className="hidden sm:inline">
-                {dbStatus?.connected ? 'PostgreSQL Live' : 'CSDL Vật tư & Dự án'}
-              </span>
-              <span className="sm:hidden text-[10px]">CSDL</span>
-            </button>
-          )}
-
           {/* User Account Menu with Instant Switcher */}
           <div className="relative">
             <button
@@ -276,38 +264,9 @@ export const Header: React.FC<HeaderProps> = ({
                   <div className="text-[11px] text-slate-500 font-mono">@{currentUser.username || 'user'} · {currentBadge.label}</div>
                   {currentUser.assignedProjectIds && currentUser.assignedProjectIds.length > 0 && (
                     <div className="text-[10px] text-blue-600 mt-1">
-                      Phạm vi dự án: {currentUser.assignedProjectIds.join(', ')}
+                      Phạm vi dự án: {currentUser.assignedProjectIds.map(id => projects.find(p => p.id === id)?.code || id).join(', ')}
                     </div>
                   )}
-                </div>
-
-                {/* Quick Account Switcher */}
-                <div className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                  Chuyển nhanh tài khoản demo (1 chạm)
-                </div>
-                <div className="max-h-48 overflow-y-auto px-1.5 space-y-0.5">
-                  {accounts.filter(a => a.isActive).map(acc => {
-                    const isCur = acc.id === currentUser.id;
-                    return (
-                      <button
-                        key={acc.id}
-                        type="button"
-                        onClick={() => {
-                          if (onAccountSwitch) onAccountSwitch(acc);
-                          setIsUserMenuOpen(false);
-                        }}
-                        className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-left text-xs transition-colors cursor-pointer ${
-                          isCur ? 'bg-blue-50 text-blue-800 font-bold' : 'hover:bg-slate-50 text-slate-700'
-                        }`}
-                      >
-                        <div className="truncate">
-                          <div>{acc.name}</div>
-                          <div className="text-[10px] text-slate-400 font-mono">@{acc.username}</div>
-                        </div>
-                        {isCur && <CheckCircle2 className="w-3.5 h-3.5 text-blue-600 shrink-0" />}
-                      </button>
-                    );
-                  })}
                 </div>
 
                 <div className="border-t border-slate-100 mt-1 pt-1">
@@ -320,7 +279,7 @@ export const Header: React.FC<HeaderProps> = ({
                     className="w-full flex items-center gap-2 px-3.5 py-2 text-xs text-slate-700 hover:bg-slate-50 text-left cursor-pointer"
                   >
                     <KeyRound className="w-3.5 h-3.5 text-slate-500" />
-                    <span>Đổi mật khẩu (AUTH-02)</span>
+                    <span>Đổi mật khẩu</span>
                   </button>
 
                   <button

@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { DateInput } from '../components/inputs.tsx';
+import { DateInput, SearchSelect } from '../components/inputs.tsx';
+import { Field, ctlCls } from '../components/reportKit.tsx';
 import { TechDoc } from '../types/index.ts';
 import { useStore } from '../state/store.tsx';
 import { UploadCloud, Search } from 'lucide-react';
@@ -53,26 +54,30 @@ export const TechnicalDocsView: React.FC<TechnicalDocsViewProps> = ({ onOpenDocV
         )}
       </div>
 
-      <div className="bg-white p-3 rounded-xl border border-slate-200 flex flex-wrap gap-2 text-xs">
-        <div className="relative">
-          <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
-          <input value={search} onChange={e => { setSearch(e.target.value); setPage(1); }} placeholder="Tìm tên hồ sơ, tên tệp gốc, nhãn phiên bản" className="pl-8 pr-3 py-1.5 bg-slate-50 border border-slate-300 rounded-lg w-72" />
-        </div>
-        <select value={fProject} onChange={e => { setFProject(e.target.value); setFTask(''); setPage(1); }} className="px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg">
-          <option value="">Tất cả dự án ({visibleProjects.length})</option>
-          {visibleProjects.map(p => <option key={p.id} value={p.id}>{p.code} – {p.name}</option>)}
-        </select>
-        <select value={fType} onChange={e => { setFType(e.target.value); setPage(1); }} className="px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg">
-          <option value="">Mọi loại hồ sơ</option>
-          {Object.entries(DOC_TYPE_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-        </select>
-        <select value={fTask} onChange={e => { setFTask(e.target.value); setPage(1); }} className="px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg">
-          <option value="">Mọi công việc liên quan</option>
-          {tasks.filter(t => (!fProject || t.projectId === fProject) && scoped.docs.some(d => d.taskId === t.id)).map(t => <option key={t.id} value={t.id}>{t.code} · {t.title}</option>)}
-        </select>
-        <label className="flex items-center gap-1.5 text-slate-600">Cập nhật từ
-          <DateInput value={fFrom} onChange={e => { setFFrom(e.target.value); setPage(1); }} className="px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg font-mono" />
-        </label>
+      <div className="bg-white p-3 rounded-xl border border-slate-200 flex flex-wrap items-end gap-2.5 text-xs">
+        <Field label="Tìm kiếm" className="w-full sm:w-64">
+          <div className="relative">
+            <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+            <input value={search} onChange={e => { setSearch(e.target.value); setPage(1); }} placeholder="Tên hồ sơ, tên tệp gốc, nhãn phiên bản" className={`${ctlCls} w-full pl-8`} />
+          </div>
+        </Field>
+        <Field label="Dự án" className="w-full sm:w-60">
+          <SearchSelect value={fProject} onChange={v => { setFProject(v); setFTask(''); setPage(1); }} allLabel={`Tất cả dự án (${visibleProjects.length})`} className={`${ctlCls} w-full`}
+            options={visibleProjects.map(p => ({ value: p.id, label: `${p.code} – ${p.name}` }))} />
+        </Field>
+        <Field label="Loại hồ sơ" className="w-[calc(50%-5px)] sm:w-auto">
+          <select value={fType} onChange={e => { setFType(e.target.value); setPage(1); }} className={`${ctlCls} w-full`}>
+            <option value="">Mọi loại</option>
+            {Object.entries(DOC_TYPE_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+          </select>
+        </Field>
+        <Field label="Cập nhật từ ngày" className="w-[calc(50%-5px)] sm:w-auto">
+          <DateInput value={fFrom} onChange={e => { setFFrom(e.target.value); setPage(1); }} className={`${ctlCls} w-full sm:w-[140px]`} />
+        </Field>
+        <Field label="Công việc liên quan" className="w-full sm:w-60">
+          <SearchSelect value={fTask} onChange={v => { setFTask(v); setPage(1); }} allLabel="Mọi công việc" className={`${ctlCls} w-full`}
+            options={tasks.filter(t => (!fProject || t.projectId === fProject) && scoped.docs.some(d => d.taskId === t.id)).map(t => ({ value: t.id, label: `${t.code} · ${t.title}` }))} />
+        </Field>
       </div>
 
       <DocsTable docs={pageRows} onView={onOpenDocViewer} onDownload={onDownloadDoc} onMessage={toast.show} />

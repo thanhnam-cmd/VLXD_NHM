@@ -118,14 +118,16 @@ interface SidebarProps {
   activeTab: ActiveTab;
   onTabChange: (tab: ActiveTab) => void;
   currentUser: UserAccount;
+  /** Hiển thị trong ngăn trượt (điện thoại): chiếm toàn chiều cao, không dính đầu trang */
+  drawer?: boolean;
 }
 
 const itemCls = (active: boolean) =>
   `w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-left text-xs font-semibold transition-all cursor-pointer ${
-    active ? 'bg-blue-50 text-blue-700 font-bold border-l-4 border-blue-600' : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
+    active ? 'bg-white text-[#152A55] font-bold shadow-sm [&>svg]:!text-[#D4A017]' : 'text-slate-200/90 hover:bg-white/10 hover:text-white [&>svg]:!text-slate-300'
   }`;
 
-export const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange, currentUser }) => {
+export const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange, currentUser, drawer }) => {
   const role = normalizeRole(currentUser.role);
   const groupOf = (tab: ActiveTab) => [ASSIGNMENT_GROUP, CATALOG_GROUP].find(g => g.children.some(c => c.id === tab))?.key;
   const [openGroups, setOpenGroups] = useState<string[]>(() => {
@@ -161,22 +163,22 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange, curren
             onClick={() => toggle(item.key)}
             aria-expanded={open}
             className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-left text-xs font-semibold transition-all cursor-pointer ${
-              containsActive && !open ? 'bg-blue-50 text-blue-700 font-bold' : containsActive ? 'text-blue-700 font-bold' : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
+              containsActive && !open ? 'bg-white text-[#152A55] font-bold shadow-sm [&>svg]:!text-[#D4A017]' : containsActive ? 'text-white font-bold bg-white/10 [&>svg]:!text-[#D4A017]' : 'text-slate-200/90 hover:bg-white/10 hover:text-white [&>svg]:!text-slate-300'
             }`}
           >
             {item.icon}
             <span className="flex-1">{item.label}</span>
-            {open ? <ChevronDown className="w-3.5 h-3.5 text-slate-400" /> : <ChevronRight className="w-3.5 h-3.5 text-slate-400" />}
+            {open ? <ChevronDown className="w-3.5 h-3.5 opacity-60" /> : <ChevronRight className="w-3.5 h-3.5 opacity-60" />}
           </button>
           {open && (
-            <div className="mt-0.5 ml-5 pl-2 border-l border-slate-200 space-y-0.5">
+            <div className="mt-0.5 ml-5 pl-2 border-l border-white/15 space-y-0.5">
               {item.children.map(c => (
                 <button
                   key={c.id}
                   type="button"
                   onClick={() => onTabChange(c.id)}
                   className={`w-full text-left px-3 py-2 rounded-lg text-xs transition-all cursor-pointer ${
-                    activeTab === c.id ? 'bg-blue-50 text-blue-700 font-bold' : 'text-slate-600 font-medium hover:bg-slate-50 hover:text-slate-900'
+                    activeTab === c.id ? 'bg-white text-[#152A55] font-bold shadow-sm' : 'text-slate-300 font-medium hover:bg-white/10 hover:text-white'
                   }`}
                 >
                   {c.label}
@@ -204,16 +206,16 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange, curren
           : 'Hệ thống NMH · Quản lý dự án';
 
   return (
-    <aside className="w-60 bg-white border-r border-slate-200 flex flex-col justify-between shrink-0 h-[calc(100vh-53px)] sticky top-[53px] print:hidden">
-      <div className="p-3 space-y-3 overflow-y-auto">
+    <aside className={`w-64 md:w-60 bg-gradient-to-b from-[#152A55] to-[#0D1A36] flex flex-col justify-between shrink-0 print:hidden ${drawer ? 'h-full' : 'h-[calc(100vh-53px)] sticky top-[53px]'}`}>
+      <div className="p-3 space-y-3 overflow-y-auto sidebar-scroll">
         {sections.map((s, i) => (
-          <div key={s.title} className={`space-y-1 ${i > 0 ? 'pt-2 border-t border-slate-100' : ''}`}>
-            <div className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">{s.title}</div>
+          <div key={s.title} className={`space-y-1 ${i > 0 ? 'pt-2 border-t border-white/10' : ''}`}>
+            <div className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-[#D4A017]/80">{s.title}</div>
             {renderItems(s.items)}
           </div>
         ))}
       </div>
-      <div className="p-3 border-t border-slate-100 bg-slate-50/70 text-[10px] text-slate-400 text-center font-medium">{footer}</div>
+      <div className="p-3 border-t border-white/10 bg-black/15 text-[10px] text-slate-300/70 text-center font-medium">{footer}</div>
     </aside>
   );
 };

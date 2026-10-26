@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { DateInput } from '../components/inputs.tsx';
+import { Field, ctlCls } from '../components/reportKit.tsx';
 import { UserAccount, UserRole, SystemConfig, AuditLog } from '../types/index.ts';
 import { useStore } from '../state/store.tsx';
 import { dbService } from '../services/db.ts';
@@ -633,26 +634,32 @@ export const AdminView: React.FC<AdminViewProps> = ({ initialTab = 'accounts' })
       {/* ===== MH-21: Nhật ký thao tác (chỉ đọc) ===== */}
       {activeTab === 'audit' && (
         <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-xs">
-          <div className="px-5 py-3 bg-slate-50 border-b border-slate-200 flex flex-wrap gap-2 text-xs items-center">
-            <DateInput value={aFrom} onChange={e => { setAFrom(e.target.value); setAPage(1); }} className="px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg font-mono" />
-            <span>–</span>
-            <DateInput value={aTo} onChange={e => { setATo(e.target.value); setAPage(1); }} className="px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg font-mono" />
-            <select value={aUser} onChange={e => { setAUser(e.target.value); setAPage(1); }} className="px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg">
+          <div className="px-4 sm:px-5 py-3 bg-slate-50 border-b border-slate-200 flex flex-wrap gap-2.5 text-xs items-end">
+            <Field label="Từ ngày" className="w-[calc(50%-5px)] sm:w-auto"><DateInput value={aFrom} onChange={e => { setAFrom(e.target.value); setAPage(1); }} className={`${ctlCls} w-full sm:w-[140px]`} /></Field>
+            <Field label="Đến ngày" className="w-[calc(50%-5px)] sm:w-auto"><DateInput value={aTo} onChange={e => { setATo(e.target.value); setAPage(1); }} className={`${ctlCls} w-full sm:w-[140px]`} /></Field>
+            <Field label="Người thực hiện" className="w-full sm:w-auto">
+            <select value={aUser} onChange={e => { setAUser(e.target.value); setAPage(1); }} className={`${ctlCls} w-full`}>
               <option value="">Mọi người thực hiện</option>
               {accounts.map(a => <option key={a.id} value={a.username}>{a.username}</option>)}
               <option value="Hệ thống">Hệ thống</option>
             </select>
-            <select value={aAction} onChange={e => { setAAction(e.target.value); setAPage(1); }} className="px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg">
+            </Field>
+            <Field label="Loại thao tác" className="w-full sm:w-auto">
+            <select value={aAction} onChange={e => { setAAction(e.target.value); setAPage(1); }} className={`${ctlCls} w-full`}>
               <option value="">Mọi loại thao tác</option>
               {Object.entries(AUDIT_ACTION_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
             </select>
-            <select value={aObject} onChange={e => { setAObject(e.target.value); setAPage(1); }} className="px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg">
+            </Field>
+            <Field label="Đối tượng" className="w-full sm:w-auto">
+            <select value={aObject} onChange={e => { setAObject(e.target.value); setAPage(1); }} className={`${ctlCls} w-full`}>
               <option value="">Mọi đối tượng</option>
               {objectTypes.map(o => <option key={o} value={o}>{o}</option>)}
             </select>
+            </Field>
           </div>
           {auditErr && <div className="p-3"><ErrorBox message={auditErr} /></div>}
-          <table className="w-full text-left text-xs">
+          <div className="overflow-x-auto">
+          <table className="w-full text-left text-xs min-w-[640px]">
             <thead className="text-[10px] uppercase text-slate-500 border-b border-slate-200 bg-white">
               <tr><th className="p-3">Thời điểm</th><th className="p-3">Người thực hiện</th><th className="p-3">Thao tác</th><th className="p-3">Đối tượng</th><th className="p-3">Lý do</th></tr>
             </thead>
@@ -681,6 +688,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ initialTab = 'accounts' })
               ))}
             </tbody>
           </table>
+          </div>
           <div className="px-5 pb-3"><Pagination page={aPage} pageSize={AUDIT_PAGE} total={auditRows.length} unit="bản ghi" onChange={setAPage} /></div>
         </div>
       )}

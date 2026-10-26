@@ -60,6 +60,7 @@ const AppShell: React.FC = () => {
   const setSelectedDocForViewer = (doc: TechDoc | null, v?: { versionNum: number }) => setDocViewer(doc ? { doc, versionNum: v?.versionNum } : null);
   const [quickView, setQuickView] = useState<{ projectId: string; taskId?: string } | null>(null);
   const [dbStatus, setDbStatus] = useState<DatabaseStatus | null>(null);
+  const [mobileMenu, setMobileMenu] = useState(false);
   const [isDbModalOpen, setIsDbModalOpen] = useState(false);
   const [isNotificationDrawerOpen, setIsNotificationDrawerOpen] = useState(false);
   const [isSearchModalOpen, setIsSearchModalOpen] = useState(false);
@@ -254,7 +255,7 @@ const AppShell: React.FC = () => {
         onAccountSwitch={handleAccountSwitch}
         onLogout={handleLogout}
         dbStatus={dbStatus}
-        onOpenDbModal={() => setIsDbModalOpen(true)}
+        onOpenMenu={() => setMobileMenu(true)}
         notificationCount={totalNotifications}
         onOpenNotifications={() => setIsNotificationDrawerOpen(true)}
         onOpenSearch={() => setIsSearchModalOpen(true)}
@@ -265,7 +266,7 @@ const AppShell: React.FC = () => {
           <Sidebar activeTab={sidebarTab} onTabChange={(tab) => go(tab)} currentUser={currentUser} />
         </div>
 
-        <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-[1600px] w-full mx-auto pb-24 md:pb-8 print:p-0 print:max-w-none">
+        <main className="flex-1 min-w-0 p-4 sm:p-6 lg:p-8 max-w-[1600px] w-full mx-auto pb-24 md:pb-8 print:p-0 print:max-w-none">
           {store.syncError && (
             <div className="mb-4 p-3 rounded-xl bg-red-50 border border-red-200 text-red-700 text-xs font-semibold">{store.syncError}</div>
           )}
@@ -274,6 +275,16 @@ const AppShell: React.FC = () => {
       </div>
 
       <MobileTabBar activeTab={sidebarTab} onTabChange={(tab) => go(tab)} currentUser={currentUser} />
+
+      {/* Menu đầy đủ dạng ngăn trượt trên điện thoại */}
+      {mobileMenu && (
+        <div className="md:hidden fixed inset-0 z-50 flex print:hidden" onClick={() => setMobileMenu(false)}>
+          <div className="h-full shadow-2xl" onClick={e => e.stopPropagation()}>
+            <Sidebar drawer activeTab={sidebarTab} onTabChange={(tab) => { setMobileMenu(false); go(tab); }} currentUser={currentUser} />
+          </div>
+          <div className="flex-1 bg-black/45 backdrop-blur-[1px]" />
+        </div>
+      )}
 
       <NotificationDrawer
         isOpen={isNotificationDrawerOpen}

@@ -143,7 +143,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
         <>
           <div className="space-y-3 print:hidden">
             <div className={filterBoxCls}>
-              <Field label="Dự án" className="w-72"><SearchSelect value={bc1Project} onChange={setBc1Project} allLabel={`Tất cả dự án (${projects.length})`} options={projectOptions} className={ctlCls} /></Field>
+              <Field label="Dự án" className="w-72"><SearchSelect value={bc1Project} onChange={setBc1Project} allLabel={`Tất cả dự án (${projects.length})`} options={projectOptions} className={`${ctlCls} w-full`} /></Field>
               <Field label="Trạng thái">
                 <select value={bc1Status} onChange={e => setBc1Status(e.target.value)} className={ctlCls}>
                   <option value="all">Tất cả</option>
@@ -213,8 +213,8 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
             <div className={filterBoxCls}>
               <Field label="Từ ngày" required><DateInput value={bc2From} onChange={e => setBc2From(e.target.value)} className={`${ctlCls} w-36`} /></Field>
               <Field label="Đến ngày" required><DateInput value={bc2To} onChange={e => setBc2To(e.target.value)} className={`${ctlCls} w-36`} /></Field>
-              <Field label="Nhân sự" className="w-52"><SearchSelect value={bc2Staff} onChange={setBc2Staff} allLabel="Tất cả nhân sự" options={staff.map(s => ({ value: s.id, label: s.name, sub: s.roleTitleDisplay }))} className={ctlCls} /></Field>
-              <Field label="Dự án" className="w-60"><SearchSelect value={bc2Project} onChange={setBc2Project} allLabel="Tất cả dự án" options={projectOptions} className={ctlCls} /></Field>
+              <Field label="Nhân sự" className="w-52"><SearchSelect value={bc2Staff} onChange={setBc2Staff} allLabel="Tất cả nhân sự" options={staff.map(s => ({ value: s.id, label: s.name, sub: s.roleTitleDisplay }))} className={`${ctlCls} w-full`} /></Field>
+              <Field label="Dự án" className="w-60"><SearchSelect value={bc2Project} onChange={setBc2Project} allLabel="Tất cả dự án" options={projectOptions} className={`${ctlCls} w-full`} /></Field>
               <Field label="Trạng thái">
                 <select value={bc2Status} onChange={e => setBc2Status(e.target.value)} className={ctlCls}>
                   <option value="HIEU_LUC">Hiệu lực</option><option value="HUY">Đã hủy</option><option value="all">Tất cả</option>
@@ -303,8 +303,8 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                   <option value="both">Quá hạn và sắp đến hạn</option><option value="overdue">Quá hạn</option><option value="upcoming">Sắp đến hạn</option>
                 </select>
               </Field>
-              <Field label="Dự án" className="w-64"><SearchSelect value={bc3Project} onChange={setBc3Project} allLabel="Tất cả dự án" options={projectOptions} className={ctlCls} /></Field>
-              <Field label="Phụ trách chính" className="w-52"><SearchSelect value={bc3Staff} onChange={setBc3Staff} allLabel="Tất cả" options={staff.filter(s => tasks.some(t => t.assigneeId === s.id)).map(s => ({ value: s.id, label: s.name, sub: s.roleTitleDisplay }))} className={ctlCls} /></Field>
+              <Field label="Dự án" className="w-64"><SearchSelect value={bc3Project} onChange={setBc3Project} allLabel="Tất cả dự án" options={projectOptions} className={`${ctlCls} w-full`} /></Field>
+              <Field label="Phụ trách chính" className="w-52"><SearchSelect value={bc3Staff} onChange={setBc3Staff} allLabel="Tất cả" options={staff.filter(s => tasks.some(t => t.assigneeId === s.id)).map(s => ({ value: s.id, label: s.name, sub: s.roleTitleDisplay }))} className={`${ctlCls} w-full`} /></Field>
               <button type="button" onClick={() => { setBc3Group('both'); setBc3Project(''); setBc3Staff(''); }} className="ml-auto px-3 py-1.5 rounded-lg border border-slate-300 text-xs font-semibold hover:bg-slate-50 cursor-pointer">Xóa bộ lọc</button>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
