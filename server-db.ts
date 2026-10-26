@@ -175,10 +175,11 @@ export async function ensureSchemaExtensions(pool: pg.Pool) {
   }
   await pool.query(`
     INSERT INTO phan_cong_ben_ngoai (id, cong_viec_id, du_an_id, doi_ben_ngoai_id, phan_viec_giao, bat_dau_du_kien, ket_thuc_du_kien,
-      so_nguoi_du_kien, nhan_su_phoi_hop_id, trang_thai, ghi_chu)
+      so_nguoi_du_kien, nhan_su_phoi_hop_id, trang_thai, ghi_chu, nguoi_tao_id)
     SELECT (SELECT COALESCE(MAX(id), 0) FROM phan_cong_ben_ngoai) + ROW_NUMBER() OVER (ORDER BY l.du_an_id, l.doi_ben_ngoai_id),
       NULL, l.du_an_id, l.doi_ben_ngoai_id, 'Khoán thi công theo dự án ' || d.ma_du_an, d.bat_dau_du_kien, d.ket_thuc_du_kien,
-      l.so_nguoi_tham_gia, d.nhan_su_phu_trach_id, 'HIEU_LUC', 'Tạo từ đội khoán ngoài gắn với dự án'
+      l.so_nguoi_tham_gia, d.nhan_su_phu_trach_id, 'HIEU_LUC', 'Tạo từ đội khoán ngoài gắn với dự án',
+      COALESCE(d.nguoi_tao_id, (SELECT tk.id FROM tai_khoan tk WHERE tk.nhan_su_id = d.nhan_su_phu_trach_id ORDER BY tk.id LIMIT 1), (SELECT MIN(id) FROM tai_khoan))
     FROM du_an_doi_ben_ngoai l JOIN du_an d ON d.id = l.du_an_id
     WHERE d.trang_thai NOT IN ('HOAN_THANH', 'HUY')
       AND NOT EXISTS (SELECT 1 FROM phan_cong_ben_ngoai e LEFT JOIN cong_viec cv ON e.cong_viec_id = cv.id
