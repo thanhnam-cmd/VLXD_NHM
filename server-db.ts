@@ -113,6 +113,7 @@ export async function ensureSchemaExtensions(pool: pg.Pool) {
     );
     CREATE TABLE IF NOT EXISTS moc_nang_cap (khoa VARCHAR(100) PRIMARY KEY, thoi_diem TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
     ALTER TABLE phan_cong_ben_ngoai ADD COLUMN IF NOT EXISTS du_an_id INT REFERENCES du_an(id);
+    ALTER TABLE phan_cong_ben_ngoai ALTER COLUMN cong_viec_id DROP NOT NULL;
     UPDATE phan_cong_ben_ngoai e SET du_an_id = cv.du_an_id FROM cong_viec cv WHERE e.cong_viec_id = cv.id AND e.du_an_id IS NULL;
   `);
   // Cột đường dẫn/nội dung từng tạo dạng VARCHAR ngắn (gây lỗi "value too long") → TEXT
