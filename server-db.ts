@@ -93,6 +93,65 @@ export async function ensureSchemaExtensions(pool: pg.Pool) {
       PRIMARY KEY (phan_cong_ben_ngoai_id, ngay)
     );
   `);
+  // Tệp lưu thật trong CSDL (ảnh hiện trường, hồ sơ kỹ thuật); đường dẫn dạng /api/files/{id}
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS tep_du_lieu (
+      id SERIAL PRIMARY KEY,
+      ten_tep_goc VARCHAR(255) NOT NULL,
+      kieu_noi_dung VARCHAR(150),
+      dung_luong_byte BIGINT,
+      du_lieu BYTEA NOT NULL,
+      thoi_diem_tai_len TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS nhan_xet_cap_nhat (
+      id INT PRIMARY KEY,
+      cap_nhat_id INT NOT NULL REFERENCES cap_nhat_ket_qua(id),
+      tai_khoan_id INT REFERENCES tai_khoan(id),
+      loai VARCHAR(30) NOT NULL DEFAULT 'NHAN_XET',
+      noi_dung TEXT NOT NULL,
+      thoi_diem TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS moc_nang_cap (khoa VARCHAR(100) PRIMARY KEY, thoi_diem TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
+    ALTER TABLE phan_cong_ben_ngoai ADD COLUMN IF NOT EXISTS du_an_id INT REFERENCES du_an(id);
+    UPDATE phan_cong_ben_ngoai e SET du_an_id = cv.du_an_id FROM cong_viec cv WHERE e.cong_viec_id = cv.id AND e.du_an_id IS NULL;
+  `);
+  // Cột đường dẫn/nội dung từng tạo dạng VARCHAR ngắn (gây lỗi "value too long") → TEXT
+  await pool.query(`
+    DO $$ DECLARE r RECORD; BEGIN
+      FOR r IN SELECT table_name, column_name FROM information_schema.columns
+        WHERE table_schema = 'public' AND data_type = 'character varying'
+          AND (table_name, column_name) IN (('tep_minh_chung','duong_dan_luu'), ('phien_ban_ho_so','duong_dan_luu'), ('cap_nhat_ket_qua','noi_dung'),
+            ('cap_nhat_ket_qua','kho_khan'), ('cap_nhat_ket_qua','ghi_chu_doi_ngoai'), ('nhan_su_ngoai_theo_ngay','noi_dung'), ('nhan_su_ngoai_theo_ngay','ho_ten'))
+      LOOP EXECUTE format('ALTER TABLE %I ALTER COLUMN %I TYPE TEXT', r.table_name, r.column_name); END LOOP;
+    END $$;
+  `);
+  const once = async (key: string, run: () => Promise<void>) => {
+    const done = await pool.query(`SELECT 1 FROM moc_nang_cap WHERE khoa = $1`, [key]);
+    if (done.rowCount) return;
+    await run();
+    await pool.query(`INSERT INTO moc_nang_cap (khoa) VALUES ($1) ON CONFLICT DO NOTHING`, [key]);
+  };
+  // Thời điểm tra cứu mặc định theo giờ máy (trước đây cố định 12/10/2026 09:00)
+  await once('GIO_TRA_CUU_THEO_MAY', async () => {
+    await pool.query(`UPDATE cau_hinh SET gia_tri = '', thoi_diem_cap_nhat = CURRENT_TIMESTAMP WHERE khoa_cau_hinh = 'THOI_DIEM_TRA_CUU'`);
+  });
+  // Bảng nhân sự đội ngoài theo ngày của phần việc mẫu số 1 (nạp một lần nếu chưa có)
+  await once('NHAN_SU_NGOAI_MAU', async () => {
+    const ok = await pool.query(`SELECT 1 FROM phan_cong_ben_ngoai WHERE id = 1 AND doi_ben_ngoai_id = 1`);
+    const has = await pool.query(`SELECT 1 FROM nhan_su_ngoai_theo_ngay WHERE phan_cong_ben_ngoai_id = 1`);
+    if (!ok.rowCount || has.rowCount) return;
+    await pool.query(`
+      INSERT INTO nhan_su_ngoai_theo_ngay (phan_cong_ben_ngoai_id, ngay, so_co_mat, ho_ten, noi_dung, nguoi_cap_nhat, thoi_diem_cap_nhat) VALUES
+      (1, '2026-10-02', 4, 'Nguyễn Văn An, Trần Văn Bình, Lê Văn Cảnh, Phạm Văn Dũng', 'Khảo sát tuyến, đi ống luồn tầng 1', 'Phạm Văn Cường', '2026-10-02 17:30:00'),
+      (1, '2026-10-03', 4, NULL, 'Đi ống luồn tầng 2-3', 'Phạm Văn Cường', '2026-10-03 17:20:00'),
+      (1, '2026-10-05', 3, NULL, 'Kéo cáp tín hiệu tầng 1-2', 'Phạm Văn Cường', '2026-10-05 17:10:00'),
+      (1, '2026-10-06', 4, NULL, 'Kéo cáp tín hiệu tầng 3', 'Trần Quốc Bảo', '2026-10-06 17:40:00'),
+      (1, '2026-10-07', 0, NULL, 'Nghỉ do mưa lớn', 'Phạm Văn Cường', '2026-10-07 08:30:00'),
+      (1, '2026-10-08', 4, NULL, 'Kéo cáp tầng 4, đánh dấu đầu cáp', 'Phạm Văn Cường', '2026-10-08 17:15:00'),
+      (1, '2026-10-09', 4, NULL, 'Kéo cáp tầng 5', 'Phạm Văn Cường', '2026-10-09 17:25:00')
+      ON CONFLICT DO NOTHING`);
+  });
+
   // Đội khoán ngoài gắn với dự án + số nhân sự tham gia. Lần đầu tạo bảng thì lấy từ các phần việc đã giao ngoài.
   const linkExists = await pool.query(`SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='du_an_doi_ben_ngoai'`);
   await pool.query(`
@@ -113,6 +172,17 @@ export async function ensureSchemaExtensions(pool: pg.Pool) {
       ON CONFLICT DO NOTHING;
     `);
   }
+  await pool.query(`
+    INSERT INTO phan_cong_ben_ngoai (id, cong_viec_id, du_an_id, doi_ben_ngoai_id, phan_viec_giao, bat_dau_du_kien, ket_thuc_du_kien,
+      so_nguoi_du_kien, nhan_su_phoi_hop_id, trang_thai, ghi_chu)
+    SELECT (SELECT COALESCE(MAX(id), 0) FROM phan_cong_ben_ngoai) + ROW_NUMBER() OVER (ORDER BY l.du_an_id, l.doi_ben_ngoai_id),
+      NULL, l.du_an_id, l.doi_ben_ngoai_id, 'Khoán thi công theo dự án ' || d.ma_du_an, d.bat_dau_du_kien, d.ket_thuc_du_kien,
+      l.so_nguoi_tham_gia, d.nhan_su_phu_trach_id, 'HIEU_LUC', 'Tạo từ đội khoán ngoài gắn với dự án'
+    FROM du_an_doi_ben_ngoai l JOIN du_an d ON d.id = l.du_an_id
+    WHERE d.trang_thai NOT IN ('HOAN_THANH', 'HUY')
+      AND NOT EXISTS (SELECT 1 FROM phan_cong_ben_ngoai e LEFT JOIN cong_viec cv ON e.cong_viec_id = cv.id
+        WHERE COALESCE(e.du_an_id, cv.du_an_id) = l.du_an_id AND e.doi_ben_ngoai_id = l.doi_ben_ngoai_id AND e.trang_thai = 'HIEU_LUC');
+  `);
   // Đồng bộ tên khóa cấu hình theo MH-20
   await pool.query(`
     UPDATE cau_hinh SET khoa_cau_hinh = 'SO_NGAY_SAP_DEN_HAN'
@@ -232,6 +302,10 @@ export async function bootstrap(pool: pg.Pool) {
     LEFT JOIN tai_khoan tk ON c.tai_khoan_gui_id = tk.id LEFT JOIN vai_tro vt ON tk.vai_tro_id = vt.id
     LEFT JOIN nhan_su ns ON tk.nhan_su_id = ns.id ORDER BY c.thoi_diem_ghi_nhan DESC`);
   const files = await q(`SELECT cap_nhat_id::text AS lid, ten_tep_goc AS name, duong_dan_luu AS path, dung_luong_byte AS size FROM tep_minh_chung ORDER BY id`);
+  const comments = await q(`
+    SELECT n.id::text, n.cap_nhat_id::text AS lid, n.loai AS kind, n.noi_dung AS content, ${TS('n.thoi_diem')} AS at,
+      tk.id::text AS "byAccountId", COALESCE(tk.ten_hien_thi, 'Hệ thống') AS by
+    FROM nhan_xet_cap_nhat n LEFT JOIN tai_khoan tk ON n.tai_khoan_id = tk.id ORDER BY n.thoi_diem`);
   const workLogs = logsRaw.map(l => ({
     id: l.id, taskId: l.taskId, taskCode: l.taskCode, projectId: l.projectId,
     submittedByAccountId: l.submittedByAccountId, submittedByUsername: l.submittedByUsername,
@@ -243,7 +317,11 @@ export async function bootstrap(pool: pg.Pool) {
     recordedByManager: l.role === 'QUAN_LY' || l.role === 'QUAN_TRI',
     externalTeamId: l.externalTeamId || undefined, externalTeamCount: l.externalTeamCount ?? undefined,
     externalStaffingStatus: l.externalStaffingStatus || undefined, externalTeamNote: l.externalTeamNote || undefined,
-    photos: files.filter(f => f.lid === l.id).map(f => ({ name: f.name, size: Number(f.size) || undefined, dataUrl: String(f.path || '').startsWith('data:') ? f.path : undefined }))
+    photos: files.filter(f => f.lid === l.id).map(f => {
+      const p = String(f.path || '');
+      return { name: f.name, size: Number(f.size) || undefined, url: p.startsWith('/api/files/') ? p : undefined, dataUrl: p.startsWith('data:') ? p : undefined };
+    }),
+    comments: comments.filter(c => c.lid === l.id).map(({ lid, ...c }) => c)
   }));
 
   const docsRaw = await q(`
@@ -275,12 +353,12 @@ export async function bootstrap(pool: pg.Pool) {
     FROM doi_ben_ngoai ORDER BY id`);
 
   const extRaw = await q(`
-    SELECT e.id::text, e.cong_viec_id::text AS "taskId", cv.du_an_id::text AS "projectId", e.doi_ben_ngoai_id::text AS "contractorId",
+    SELECT e.id::text, COALESCE(e.cong_viec_id::text, '') AS "taskId", COALESCE(e.du_an_id, cv.du_an_id)::text AS "projectId", e.doi_ben_ngoai_id::text AS "contractorId",
       dbn.ten AS "contractorName", e.phan_viec_giao AS "workDescription", ${TS('e.bat_dau_du_kien')} AS "startDate",
       ${TS('e.ket_thuc_du_kien')} AS "dueDate", e.so_nguoi_du_kien AS "workerCount", e.gia_tri_khoan AS "contractValue",
       e.nhan_su_phoi_hop_id::text AS "nmhCoordinatorId", e.trang_thai AS status, e.ghi_chu AS notes,
       ${TS('e.thoi_diem_huy')} AS "cancelledAt", e.ly_do_huy AS "cancelReason"
-    FROM phan_cong_ben_ngoai e JOIN cong_viec cv ON e.cong_viec_id = cv.id JOIN doi_ben_ngoai dbn ON e.doi_ben_ngoai_id = dbn.id
+    FROM phan_cong_ben_ngoai e LEFT JOIN cong_viec cv ON e.cong_viec_id = cv.id JOIN doi_ben_ngoai dbn ON e.doi_ben_ngoai_id = dbn.id
     ORDER BY e.id`);
   const daily = await q(`
     SELECT phan_cong_ben_ngoai_id::text AS eid, TO_CHAR(ngay, 'YYYY-MM-DD') AS date, so_co_mat AS "presentCount", ho_ten AS names,
@@ -461,7 +539,7 @@ export async function syncEntity(pool: pg.Pool, entity: string, rows: Row[], act
 
         case 'externalAssignments': {
           await upsert(client, 'phan_cong_ben_ngoai', ['id'], {
-            id: toInt(r.id), cong_viec_id: toInt(r.taskId), doi_ben_ngoai_id: toInt(r.contractorId), phan_viec_giao: r.workDescription,
+            id: toInt(r.id), cong_viec_id: toInt(r.taskId), du_an_id: toInt(r.projectId), doi_ben_ngoai_id: toInt(r.contractorId), phan_viec_giao: r.workDescription,
             bat_dau_du_kien: toTs(r.startDate), ket_thuc_du_kien: toTs(r.dueDate), so_nguoi_du_kien: toInt(r.workerCount),
             gia_tri_khoan: r.contractValue ?? null, nhan_su_phoi_hop_id: toInt(r.nmhCoordinatorId), trang_thai: r.status,
             ghi_chu: str(r.notes), thoi_diem_huy: toTs(r.cancelledAt), ly_do_huy: str(r.cancelReason), thoi_diem_cap_nhat: new Date()
@@ -487,10 +565,26 @@ export async function syncEntity(pool: pg.Pool, entity: string, rows: Row[], act
           const exists = (await client.query(`SELECT COUNT(*)::int AS n FROM tep_minh_chung WHERE cap_nhat_id = $1`, [toInt(r.id)])).rows[0].n;
           if (exists === 0) {
             for (const p of r.photos || []) {
+              // Ảnh gửi kèm dạng data URL được lưu thành tệp thật trong bảng tep_du_lieu
+              let pathStored = p.url || `minh_chung/${r.id}/${p.name}`;
+              let mime = /\.png$/i.test(p.name) ? 'image/png' : 'image/jpeg';
+              let size = p.size ?? null;
+              const m = typeof p.dataUrl === 'string' ? p.dataUrl.match(/^data:([^;,]+);base64,(.*)$/s) : null;
+              if (m) {
+                const buf = Buffer.from(m[2], 'base64');
+                mime = m[1]; size = buf.length;
+                const fid = (await client.query(`INSERT INTO tep_du_lieu (ten_tep_goc, kieu_noi_dung, dung_luong_byte, du_lieu) VALUES ($1, $2, $3, $4) RETURNING id`, [p.name, mime, buf.length, buf])).rows[0].id;
+                pathStored = `/api/files/${fid}`;
+              }
               const next = (await client.query(`SELECT COALESCE(MAX(id), 0) + 1 AS id FROM tep_minh_chung`)).rows[0].id;
               await client.query(`INSERT INTO tep_minh_chung (id, cap_nhat_id, ten_tep_goc, duong_dan_luu, kieu_noi_dung, dung_luong_byte) VALUES ($1, $2, $3, $4, $5, $6)`,
-                [next, toInt(r.id), p.name, p.dataUrl || `minh_chung/${r.id}/${p.name}`, /\.png$/i.test(p.name) ? 'image/png' : 'image/jpeg', p.size ?? null]);
+                [next, toInt(r.id), p.name, pathStored, mime, size]);
             }
+          }
+          for (const c of r.comments || []) {
+            await upsert(client, 'nhan_xet_cap_nhat', ['id'], {
+              id: toInt(c.id), cap_nhat_id: toInt(r.id), loai: c.kind || 'NHAN_XET', noi_dung: c.content
+            }, { tai_khoan_id: toInt(c.byAccountId) ?? actorId, thoi_diem: toTs(c.at) || new Date() });
           }
           break;
         }
@@ -563,4 +657,19 @@ export async function syncEntity(pool: pg.Pool, entity: string, rows: Row[], act
 
 export async function setPassword(pool: pg.Pool, accountId: string, password: string) {
   await pool.query(`UPDATE tai_khoan SET mat_khau_bam = $1, thoi_diem_cap_nhat = NOW() WHERE id = $2`, [hashPassword(password), toInt(accountId)]);
+}
+
+// ---------------------------------------------------------------------------
+// Tệp lưu trong CSDL
+// ---------------------------------------------------------------------------
+export async function saveFile(pool: pg.Pool, name: string, mime: string, data: Buffer) {
+  const { rows } = await pool.query(
+    `INSERT INTO tep_du_lieu (ten_tep_goc, kieu_noi_dung, dung_luong_byte, du_lieu) VALUES ($1, $2, $3, $4) RETURNING id`,
+    [name.slice(0, 255), mime || 'application/octet-stream', data.length, data]);
+  return { id: String(rows[0].id), url: `/api/files/${rows[0].id}`, size: data.length };
+}
+
+export async function readFile(pool: pg.Pool, id: number) {
+  const { rows } = await pool.query(`SELECT ten_tep_goc AS name, kieu_noi_dung AS mime, du_lieu AS data FROM tep_du_lieu WHERE id = $1`, [id]);
+  return rows[0] as { name: string; mime: string; data: Buffer } | undefined;
 }

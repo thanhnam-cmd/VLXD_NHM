@@ -5,7 +5,7 @@ import { StoreProvider, useStore } from './state/store.tsx';
 import { Header } from './components/Header.tsx';
 import { Sidebar, ActiveTab } from './components/Sidebar.tsx';
 import { MobileTabBar } from './components/MobileTabBar.tsx';
-import { BlueprintModal } from './components/BlueprintModal.tsx';
+import { DocViewerModal, downloadDoc } from './components/DocViewerModal.tsx';
 import { LoginScreen } from './components/LoginScreen.tsx';
 import { DatabaseModal } from './components/DatabaseModal.tsx';
 import { NotificationDrawer } from './components/NotificationDrawer.tsx';
@@ -56,7 +56,8 @@ const AppShell: React.FC = () => {
   const [activeTab, setActiveTab] = useState<ActiveTab>(() => getLandingTabForUser(currentUser));
   const [nav, setNav] = useState<NavParams>({});
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
-  const [selectedDocForViewer, setSelectedDocForViewer] = useState<TechDoc | null>(null);
+  const [docViewer, setDocViewer] = useState<{ doc: TechDoc; versionNum?: number } | null>(null);
+  const setSelectedDocForViewer = (doc: TechDoc | null, v?: { versionNum: number }) => setDocViewer(doc ? { doc, versionNum: v?.versionNum } : null);
   const [quickView, setQuickView] = useState<{ projectId: string; taskId?: string } | null>(null);
   const [dbStatus, setDbStatus] = useState<DatabaseStatus | null>(null);
   const [isDbModalOpen, setIsDbModalOpen] = useState(false);
@@ -129,27 +130,9 @@ const AppShell: React.FC = () => {
     if (matched) handleAccountSwitch(matched);
   };
 
-  // Tải về phiên bản đang hiển thị (bản triển khai, nếu chưa chọn thì bản mới nhất)
-  const handleDownloadDoc = (doc: TechDoc, versionNum?: number) => {
-    const versions = doc.versions || [];
-    const v = versionNum !== undefined
-      ? versions.find(x => x.versionNum === versionNum)
-      : versions.find(x => x.isSelectedForExecution) || versions[versions.length - 1];
-    const content = `CÔNG TY TNHH ĐẦU TƯ VÀ PHÁT TRIỂN NMH\n` +
-      `HỒ SƠ KỸ THUẬT\n-----------------------------------------\n` +
-      `Hồ sơ: ${doc.title || doc.name}\nDự án: ${doc.projectCode || ''}\nLoại: ${doc.type}\n` +
-      `Phiên bản: ${v ? `${v.versionNum}${v.label ? ' · ' + v.label : ''}` : doc.version || ''}\n` +
-      `Tệp gốc: ${v?.originalFileName || ''}\nDung lượng: ${v?.fileSizeDisplay || ''}\n`;
-    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = v?.originalFileName || doc.title || 'ho-so-ky-thuat.txt';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  };
+  // Tải về: tệp gốc đã lưu trong CSDL; hồ sơ chưa có tệp gốc (dữ liệu mẫu) tải dạng ảnh PNG
+  const handleDownloadDoc = (doc: TechDoc, versionNum?: number) =>
+    downloadDoc(doc, versionNum, store.projects.find(p => p.id === doc.projectId)?.name);
 
   // Thông báo (COM-01) theo phạm vi dữ liệu
   const openProjectIds = new Set(visibleProjects.filter(isProjectOpen).map(p => p.id));
@@ -327,8 +310,8 @@ const AppShell: React.FC = () => {
         <QuickViewDrawer projectId={quickView.projectId} taskId={quickView.taskId} onClose={() => setQuickView(null)} />
       )}
 
-      {selectedDocForViewer && (
-        <BlueprintModal doc={selectedDocForViewer} onClose={() => setSelectedDocForViewer(null)} onDownload={handleDownloadDoc} />
+      {docViewer && (
+        <DocViewerModal doc={docViewer.doc} versionNum={docViewer.versionNum} onClose={() => setDocViewer(null)} />
       )}
 
       <DatabaseModal isOpen={isDbModalOpen} onClose={() => setIsDbModalOpen(false)} status={dbStatus} onRefreshStatus={refreshDbStatus} />

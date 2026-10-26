@@ -19,7 +19,7 @@ import {
 } from '../types/index.ts';
 
 export const SYSTEM_CONFIG: SystemConfig = {
-  evaluationTimestamp: '2026-10-12 09:00:00',
+  evaluationTimestamp: '',
   upcomingThresholdDays: 7,
   sessionTimeoutMinutes: 30,
   maxUploadSizeMB: 50,

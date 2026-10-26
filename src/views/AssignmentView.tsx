@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { DateInput, SearchSelect } from '../components/inputs.tsx';
 import { Assignment, StaffLeave, Staff } from '../types/index.ts';
 import { useStore } from '../state/store.tsx';
 import { DEMO_QUERY_TIME } from '../utils/progressCalculator.ts';
@@ -36,7 +37,7 @@ const mondayOf = (ymd: string) => {
 
 export const AssignmentView: React.FC<AssignmentViewProps> = ({ initialTab, initialFilter, draft }) => {
   const store = useStore();
-  const { visibleProjects, tasks, staff, assignments, leaves, categories, visibleProjectIds, findConflicts, createAssignments, subcontractors, saveExternalAssignment } = store;
+  const { visibleProjects, tasks, staff, assignments, leaves, categories, visibleProjectIds, findConflicts, createAssignments, subcontractors, saveExternalAssignment, teams } = store;
   const toast = useToast();
   const activeSubTab: 'assignments' | 'leaves' | 'contractor' = initialTab || 'assignments';
   const q = DEMO_QUERY_TIME;
@@ -197,6 +198,8 @@ export const AssignmentView: React.FC<AssignmentViewProps> = ({ initialTab, init
 
   const projectColor = (pid: string) => PROJECT_COLORS[visibleProjects.findIndex(p => p.id === pid) % PROJECT_COLORS.length] || 'bg-slate-400';
   const activeStaff = staff.filter(s => s.isActive);
+  // Nhân sự thi công: không gồm cấp quản lý
+  const fieldStaff = activeStaff.filter(s => s.roleTitle !== 'QUAN_LY');
 
   // ---------- MH-10: Lịch nghỉ/bận ----------
   const upcomingLeaves = leaves.filter(l => isRecordActive(l) && toTime(l.endDate) >= toTime(q));
@@ -328,8 +331,23 @@ export const AssignmentView: React.FC<AssignmentViewProps> = ({ initialTab, init
                           <Search className="w-3.5 h-3.5 text-slate-400 absolute left-4 top-1/2 -translate-y-1/2" />
                           <input autoFocus value={staffQuery} onChange={e => setStaffQuery(e.target.value)} placeholder="Tìm theo họ tên, chức danh, chuyên môn" className={`${inputCls} pl-8`} />
                         </div>
+                        <div className="px-2 py-1.5 border-b border-slate-100 flex flex-wrap items-center gap-1">
+                          <span className="text-[10px] font-semibold text-slate-500 mr-1">Chọn cả tổ:</span>
+                          {teams.map(t => {
+                            const members = fieldStaff.filter(s => s.teamId === t.id).map(s => s.id);
+                            if (members.length === 0) return null;
+                            const all = members.every(id => staffIds.includes(id));
+                            return (
+                              <button key={t.id} type="button" title={t.name}
+                                onClick={() => setStaffIds(all ? staffIds.filter(id => !members.includes(id)) : Array.from(new Set([...staffIds, ...members])))}
+                                className={`px-2 py-0.5 rounded-full border text-[10px] font-semibold cursor-pointer ${all ? 'bg-[#152A55] text-white border-[#152A55]' : 'bg-white text-slate-700 border-slate-300 hover:border-[#152A55]'}`}>
+                                {t.code} ({members.length})
+                              </button>
+                            );
+                          })}
+                        </div>
                         <div className="max-h-60 overflow-y-auto divide-y divide-slate-100">
-                          {activeStaff.filter(s => !staffQuery || `${s.name} ${s.roleTitleDisplay} ${s.specialty}`.toLowerCase().includes(staffQuery.toLowerCase())).map(s => {
+                          {fieldStaff.filter(s => !staffQuery || `${s.name} ${s.roleTitleDisplay} ${s.specialty}`.toLowerCase().includes(staffQuery.toLowerCase())).map(s => {
                             const busy = hasTime ? intervals.some(iv => findConflicts(s.id, iv.s, iv.e).length > 0) : null;
                             const checked = staffIds.includes(s.id);
                             return (
@@ -359,11 +377,11 @@ export const AssignmentView: React.FC<AssignmentViewProps> = ({ initialTab, init
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <Label required>Từ ngày</Label>
-                    <input type="date" value={sDate} onChange={e => { setSDate(e.target.value); if (!eDate || eDate < e.target.value) setEDate(e.target.value); }} className={`${inputCls} font-mono`} />
+                    <DateInput value={sDate} onChange={e => { setSDate(e.target.value); if (!eDate || eDate < e.target.value) setEDate(e.target.value); }} className={`${inputCls} font-mono`} />
                   </div>
                   <div>
                     <Label required>Đến ngày</Label>
-                    <input type="date" value={eDate} min={sDate || undefined} onChange={e => setEDate(e.target.value)} className={`${inputCls} font-mono`} />
+                    <DateInput value={eDate} min={sDate || undefined} onChange={e => setEDate(e.target.value)} className={`${inputCls} font-mono`} />
                   </div>
                 </div>
                 <Hint>Phân công tính theo ngày làm việc (08:00–17:00).</Hint>
@@ -485,16 +503,12 @@ export const AssignmentView: React.FC<AssignmentViewProps> = ({ initialTab, init
           {/* 12. Bộ lọc lịch phân công & 13. Bảng phân công */}
           <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-xs space-y-3">
             <div className="flex flex-wrap gap-2 items-center text-xs">
-              <select value={fProject} onChange={e => setFProject(e.target.value)} className="px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg">
-                <option value="">Mọi dự án</option>
-                {visibleProjects.map(p => <option key={p.id} value={p.id}>{p.code}</option>)}
-              </select>
-              <select value={fStaff} onChange={e => setFStaff(e.target.value)} className="px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg">
-                <option value="">Mọi nhân sự</option>
-                {staff.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-              </select>
-              <input type="date" value={fFrom} onChange={e => setFFrom(e.target.value)} className="px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg font-mono" />
-              <input type="date" value={fTo} onChange={e => setFTo(e.target.value)} className="px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg font-mono" />
+              <SearchSelect value={fProject} onChange={setFProject} allLabel="Mọi dự án" className="w-52 px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg"
+                options={visibleProjects.map(p => ({ value: p.id, label: `${p.code} – ${p.name}` }))} />
+              <SearchSelect value={fStaff} onChange={setFStaff} allLabel="Mọi nhân sự" className="w-52 px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg"
+                options={staff.map(s => ({ value: s.id, label: s.name, sub: s.roleTitleDisplay }))} />
+              <DateInput value={fFrom} onChange={e => setFFrom(e.target.value)} className="px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg font-mono" />
+              <DateInput value={fTo} onChange={e => setFTo(e.target.value)} className="px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg font-mono" />
               <select value={fStatus} onChange={e => setFStatus(e.target.value as any)} className="px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg">
                 <option value="HIEU_LUC">Hiệu lực</option>
                 <option value="HUY">Đã hủy</option>
@@ -594,12 +608,10 @@ export const AssignmentView: React.FC<AssignmentViewProps> = ({ initialTab, init
         <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-xs space-y-4">
           <div className="flex items-center justify-between pb-3 border-b border-slate-100 gap-3 flex-wrap">
             <div className="flex flex-wrap gap-2 text-xs">
-              <select value={lStaff} onChange={e => setLStaff(e.target.value)} className="px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg">
-                <option value="">Mọi nhân sự</option>
-                {staff.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-              </select>
-              <input type="date" value={lFrom} onChange={e => setLFrom(e.target.value)} className="px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg font-mono" />
-              <input type="date" value={lTo} onChange={e => setLTo(e.target.value)} className="px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg font-mono" />
+              <SearchSelect value={lStaff} onChange={setLStaff} allLabel="Mọi nhân sự" className="w-52 px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg"
+                options={staff.map(s => ({ value: s.id, label: s.name, sub: s.roleTitleDisplay }))} />
+              <DateInput value={lFrom} onChange={e => setLFrom(e.target.value)} className="px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg font-mono" />
+              <DateInput value={lTo} onChange={e => setLTo(e.target.value)} className="px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg font-mono" />
               <select value={lStatus} onChange={e => setLStatus(e.target.value as any)} className="px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg">
                 <option value="upcoming">Sắp tới và đang diễn ra</option>
                 <option value="past">Đã qua</option>
@@ -737,8 +749,8 @@ const LeaveFormModal: React.FC<{ leave?: StaffLeave; onClose: () => void; onSave
         </select>
       </div>
       <div className="grid grid-cols-2 gap-3">
-        <div><Label required>Từ ngày</Label><input type="date" value={from} onChange={e => setFrom(e.target.value)} className={`${inputCls} font-mono`} /></div>
-        <div><Label required>Đến ngày</Label><input type="date" value={to} onChange={e => setTo(e.target.value)} className={`${inputCls} font-mono`} /></div>
+        <div><Label required>Từ ngày</Label><DateInput value={from} onChange={e => setFrom(e.target.value)} className={`${inputCls} font-mono`} /></div>
+        <div><Label required>Đến ngày</Label><DateInput value={to} onChange={e => setTo(e.target.value)} className={`${inputCls} font-mono`} /></div>
       </div>
       <label className="flex items-center gap-2 cursor-pointer"><input type="checkbox" checked={allDay} onChange={e => setAllDay(e.target.checked)} /> Cả ngày (08:00–17:00)</label>
       {!allDay && (

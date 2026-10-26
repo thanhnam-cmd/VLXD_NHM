@@ -1,8 +1,10 @@
 import React, { useState } from 'react';
+import { DateInput } from './inputs.tsx';
 import type { Category, Project, Task, TaskStatus } from '../types/index.ts';
 import { useStore } from '../state/store.tsx';
 import { Modal, Label, Hint, ErrorBox, inputCls, btnPrimary, btnSecondary, btnDanger } from './ui.tsx';
 import { nextCode, toDbDateTime, formatDate } from '../utils/domain.ts';
+import { DEMO_QUERY_TIME } from '../utils/progressCalculator.ts';
 
 /** Hộp thoại Thêm hạng mục / Sửa hạng mục (MH-08c, Hình 3.22) */
 export const CategoryFormModal: React.FC<{ project: Project; category?: Category; onClose: () => void; onSaved: (msg: string) => void }> = ({
@@ -83,7 +85,7 @@ export const TaskFormModal: React.FC<{
   onClose: () => void;
   onSaved: (msg: string) => void;
 }> = ({ project, task, lockedCategoryId, onClose, onSaved }) => {
-  const { categories, tasks, staff, saveTask } = useStore();
+  const { categories, tasks, staff, teams, saveTask } = useStore();
   const isEdit = !!task;
   const projCats = categories.filter(c => c.projectId === project.id).sort((a, b) => a.orderNum - b.orderNum);
   const [categoryId, setCategoryId] = useState(task?.categoryId || lockedCategoryId || '');
@@ -92,10 +94,20 @@ export const TaskFormModal: React.FC<{
   const [title, setTitle] = useState(task?.title || '');
   const [location, setLocation] = useState(task?.locationArea || '');
   const [assigneeId, setAssigneeId] = useState(task?.assigneeId || '');
-  const [startDate, setStartDate] = useState(task?.startDate?.slice(0, 10) || '');
-  const [startTime, setStartTime] = useState(task?.startDate?.slice(11, 16) || '08:00');
-  const [endDate, setEndDate] = useState(task?.dueDate?.slice(0, 10) || '');
-  const [endTime, setEndTime] = useState(task?.dueDate?.slice(11, 16) || '17:00');
+  // Mặc định: bắt đầu từ hôm nay (hoặc ngày bắt đầu dự án), kết thúc sau 7 ngày, không vượt quá hạn dự án
+  const pStart = project.startDate.slice(0, 10), pEnd = project.dueDate.slice(0, 10), today = DEMO_QUERY_TIME.slice(0, 10);
+  const defStart = today > pStart ? (today > pEnd ? pEnd : today) : pStart;
+  const plus7 = (() => { const d = new Date(defStart + 'T00:00:00'); d.setDate(d.getDate() + 7); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; })();
+  const [startDate, setStartDate] = useState(task?.startDate?.slice(0, 10) || defStart);
+  const startTime = task?.startDate?.slice(11, 16) || '08:00';
+  const [endDate, setEndDate] = useState(task?.dueDate?.slice(0, 10) || (plus7 < pEnd ? plus7 : pEnd));
+  const endTime = task?.dueDate?.slice(11, 16) || '17:00';
+  // Chọn theo tổ đội: mỗi tổ đội chỉ có một đội trưởng
+  const leaderOf = (teamId: string) => staff.find(s => s.isActive && s.roleTitle === 'DOI_TRUONG' && s.teamId === teamId);
+  const [teamId, setTeamId] = useState(() => {
+    const a = staff.find(s => s.id === task?.assigneeId);
+    return a?.roleTitle === 'DOI_TRUONG' ? a.teamId || '' : '';
+  });
   const [desc, setDesc] = useState(task?.description || '');
   const [err, setErr] = useState<string | null>(null);
 
@@ -148,31 +160,46 @@ export const TaskFormModal: React.FC<{
         <Label>Khu vực hoặc tầng</Label>
         <input maxLength={150} value={location} onChange={e => setLocation(e.target.value)} placeholder="Ví dụ: Tầng 4, Khu A" className={inputCls} />
       </div>
-      <div>
-        <Label required>Người phụ trách chính</Label>
-        <select value={assigneeId} onChange={e => setAssigneeId(e.target.value)} className={inputCls}>
-          <option value="">-- Chọn người phụ trách --</option>
-          {staff.filter(s => s.isActive || s.id === assigneeId).map(s => <option key={s.id} value={s.id}>{s.name} – {s.roleTitleDisplay}</option>)}
-        </select>
-        <Hint>Chỉ định người phụ trách không tạo lịch thi công. Hãy vào Phân công để bố trí nhân sự.</Hint>
-      </div>
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <Label required>Bắt đầu dự kiến</Label>
-          <div className="flex gap-1.5">
-            <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className={`${inputCls} font-mono`} />
-            <input type="time" value={startTime} onChange={e => setStartTime(e.target.value)} className={`${inputCls} font-mono w-28`} />
-          </div>
+          <Label>Tổ đội thi công</Label>
+          <select value={teamId} onChange={e => {
+            setTeamId(e.target.value);
+            const l = leaderOf(e.target.value);
+            if (l) setAssigneeId(l.id);
+          }} className={inputCls}>
+            <option value="">-- Chọn theo tổ đội --</option>
+            {teams.map(t => {
+              const l = leaderOf(t.id);
+              return <option key={t.id} value={t.id} disabled={!l}>{t.code} – {t.name}{l ? ` (Đội trưởng: ${l.name})` : ' (chưa có đội trưởng)'}</option>;
+            })}
+          </select>
         </div>
         <div>
-          <Label required>Kết thúc dự kiến</Label>
-          <div className="flex gap-1.5">
-            <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className={`${inputCls} font-mono`} />
-            <input type="time" value={endTime} onChange={e => setEndTime(e.target.value)} className={`${inputCls} font-mono w-28`} />
-          </div>
-          <Hint>Là hạn hoàn thành dùng cho chỉ số quá hạn, sắp đến hạn</Hint>
+          <Label required>Người phụ trách chính</Label>
+          <select value={assigneeId} onChange={e => { setAssigneeId(e.target.value); setTeamId(''); }} className={inputCls}>
+            <option value="">-- Chọn người phụ trách --</option>
+            <optgroup label="Đội trưởng đội thi công">
+              {staff.filter(s => (s.isActive || s.id === assigneeId) && s.roleTitle === 'DOI_TRUONG').map(s => <option key={s.id} value={s.id}>{s.name} – {s.teamName || s.roleTitleDisplay}</option>)}
+            </optgroup>
+            <optgroup label="Nhân sự khác">
+              {staff.filter(s => (s.isActive || s.id === assigneeId) && s.roleTitle !== 'DOI_TRUONG').map(s => <option key={s.id} value={s.id}>{s.name} – {s.roleTitleDisplay}</option>)}
+            </optgroup>
+          </select>
         </div>
       </div>
+      <Hint>Chọn tổ đội để tự điền đội trưởng của tổ. Chỉ định người phụ trách không tạo lịch thi công; hãy vào Phân công để bố trí nhân sự.</Hint>
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <Label required>Ngày bắt đầu</Label>
+          <DateInput value={startDate} onChange={e => setStartDate(e.target.value)} className={inputCls} />
+        </div>
+        <div>
+          <Label required>Hạn hoàn thành</Label>
+          <DateInput value={endDate} onChange={e => setEndDate(e.target.value)} className={inputCls} />
+        </div>
+      </div>
+      <Hint>Trong khoảng thời gian dự án {formatDate(project.startDate)} – {formatDate(project.dueDate)}. Công việc tính từ 08:00 ngày bắt đầu đến 17:00 ngày hoàn thành.</Hint>
       <div>
         <Label>Mô tả kỹ thuật</Label>
         <textarea rows={3} maxLength={1000} value={desc} onChange={e => setDesc(e.target.value)} placeholder="Nội dung chi tiết…" className={inputCls} />

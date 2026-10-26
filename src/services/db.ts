@@ -306,6 +306,22 @@ export const dbService = {
     }
   },
 
+  /** Lưu tệp thật vào CSDL; trả về đường dẫn /api/files/{id} (null khi chưa kết nối CSDL) */
+  uploadFile: async (file: Blob, name: string): Promise<string | null> => {
+    try {
+      const res = await fetch('/api/files', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/octet-stream', 'X-File-Name': encodeURIComponent(name), 'X-File-Type': file.type || 'application/octet-stream' },
+        body: file
+      });
+      if (!res.ok) return null;
+      const data = await res.json();
+      return data.url || null;
+    } catch {
+      return null;
+    }
+  },
+
   /** Ghi các bản ghi vừa thay đổi vào PostgreSQL */
   syncEntity: async (entity: string, rows: any[], actor?: string): Promise<{ success: boolean; error?: string }> => {
     try {

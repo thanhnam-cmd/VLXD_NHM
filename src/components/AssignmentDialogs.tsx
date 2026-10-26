@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from 'react';
+import { DateInput } from './inputs.tsx';
 import type { Assignment } from '../types/index.ts';
 import { useStore } from '../state/store.tsx';
 import { Modal, Label, Hint, ErrorBox, inputCls, btnPrimary, btnSecondary, ConfirmDialog } from './ui.tsx';
@@ -50,14 +51,14 @@ export const EditAssignmentModal: React.FC<{ assignment: Assignment; onClose: ()
         <div>
           <Label required>Từ ngày và giờ bắt đầu</Label>
           <div className="flex gap-1.5">
-            <input type="date" value={sDate} onChange={e => setSDate(e.target.value)} className={`${inputCls} font-mono`} />
+            <DateInput value={sDate} onChange={e => setSDate(e.target.value)} className={`${inputCls} font-mono`} />
             <input type="time" value={sTime} onChange={e => setSTime(e.target.value)} className={`${inputCls} font-mono w-28`} />
           </div>
         </div>
         <div>
           <Label required>Đến ngày và giờ kết thúc</Label>
           <div className="flex gap-1.5">
-            <input type="date" value={eDate} onChange={e => setEDate(e.target.value)} className={`${inputCls} font-mono`} />
+            <DateInput value={eDate} onChange={e => setEDate(e.target.value)} className={`${inputCls} font-mono`} />
             <input type="time" value={eTime} onChange={e => setETime(e.target.value)} className={`${inputCls} font-mono w-28`} />
           </div>
         </div>

@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { DateInput } from '../components/inputs.tsx';
 import { TechDoc } from '../types/index.ts';
 import { useStore } from '../state/store.tsx';
 import { DEMO_QUERY_TIME, isTaskOverdue } from '../utils/progressCalculator.ts';
@@ -6,7 +7,8 @@ import { formatDate, formatDateTime, overlaps, isRecordActive, DOC_TYPE_LABEL, d
 import { StatusBadge, useToast } from '../components/ui.tsx';
 import { displayVersion, canPreview, NO_PREVIEW_MSG } from '../components/DocDialogs.tsx';
 import { DailyStaffingModal, staffingProgress } from './ExternalTeamsTab.tsx';
-import { ChevronLeft, MapPin, Calendar, User, Send } from 'lucide-react';
+import { ChevronLeft, MapPin, Calendar, User, Send, Building2 } from 'lucide-react';
+import { taskApprovalNote } from '../components/WorkLogDialogs.tsx';
 
 const addDays = (ymd: string, n: number) => {
   const d = new Date(ymd + 'T00:00:00');
@@ -18,7 +20,7 @@ interface Props {
   projectId: string;
   onBack: () => void;
   onSendReport: (projectId: string, taskId: string) => void;
-  onViewDoc: (doc: TechDoc) => void;
+  onViewDoc: (doc: TechDoc, v?: { versionNum: number }) => void;
   onDownloadDoc: (doc: TechDoc, versionNum?: number) => void;
 }
 
@@ -53,7 +55,10 @@ export const TeamLeadProjectView: React.FC<Props> = ({ projectId, onBack, onSend
   const myDocs = docs.filter(d => d.projectId === project.id && (d.scope !== 'RIENG_CONG_VIEC' || myTasks.some(t => t.id === d.taskId)))
     .filter(d => !docType || d.type === docType);
 
-  const myExternals = externalAssignments.filter(e => e.status === 'HIEU_LUC' && e.nmhCoordinatorId === currentUser.staffId && tasks.some(t => t.id === e.taskId && t.projectId === project.id));
+  // Đội ngoài phối hợp: phần việc mình phối hợp, phần việc thuộc công việc của mình, và đội khoán theo dự án
+  const myExternals = externalAssignments.filter(e => e.status === 'HIEU_LUC'
+    && (e.projectId || tasks.find(t => t.id === e.taskId)?.projectId) === project.id
+    && (!e.taskId || e.nmhCoordinatorId === currentUser.staffId || myTasks.some(t => t.id === e.taskId)));
 
   return (
     <div className="space-y-6">
@@ -73,6 +78,16 @@ export const TeamLeadProjectView: React.FC<Props> = ({ projectId, onBack, onSend
           <span className="flex items-center gap-1"><Calendar className="w-3.5 h-3.5" /> <span className="font-mono">{formatDate(project.startDate)} – {formatDate(project.dueDate)}</span></span>
           <span className="flex items-center gap-1"><User className="w-3.5 h-3.5" /> Quản lý phụ trách: <strong>{manager?.name || project.managerName}</strong></span>
         </div>
+        {(project.externalTeams || []).length > 0 && (
+          <div className="flex items-center gap-1.5 text-xs text-slate-600 mt-2 flex-wrap">
+            <Building2 className="w-3.5 h-3.5 text-purple-500" /> Đội khoán ngoài:
+            {(project.externalTeams || []).map(l => (
+              <span key={l.contractorId} className="px-2 py-0.5 rounded-full bg-purple-50 border border-purple-200 text-purple-800 font-semibold">
+                {subcontractors.find(c => c.id === l.contractorId)?.companyName || 'Đội ngoài'} · {l.workerCount} người
+              </span>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* 3. Hạng mục và công việc được giao */}
@@ -96,6 +111,16 @@ export const TeamLeadProjectView: React.FC<Props> = ({ projectId, onBack, onSend
                       </div>
                       <div className="text-slate-600">Hạn: <span className="font-mono">{formatDate(t.dueDate)}</span> {od && <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-100 text-red-700 font-bold ml-1">Quá hạn {Math.max(1, daysBetween(t.dueDate, DEMO_QUERY_TIME))} ngày</span>}</div>
                       <div className="text-slate-500">Kết quả mới nhất: {log ? <>{log.content.slice(0, 100)}{log.content.length > 100 ? '…' : ''} <span className="text-slate-400">({formatDateTime(log.submittedAt)})</span></> : 'Chưa có cập nhật kết quả'}</div>
+                      {(() => {
+                        const n = taskApprovalNote(t.id, workLogs, t);
+                        if (!n) return null;
+                        return (
+                          <div className={`inline-block mt-1 px-2 py-1 rounded-lg text-[11px] font-semibold ${n.cls}`}>
+                            {n.key === 'CHO_XAC_NHAN' ? 'Đã gửi đề nghị hoàn thành – chờ Quản lý xác nhận' : n.label}
+                            {n.comment && <span className="font-normal">: {n.comment}</span>}
+                          </div>
+                        );
+                      })()}
                     </div>
                     <button type="button" onClick={() => onSendReport(project.id, t.id)} className="px-3 py-1.5 rounded-lg bg-[#152A55] text-white font-semibold hover:bg-[#1E3A75] flex items-center gap-1.5 shrink-0 cursor-pointer">
                       <Send className="w-3.5 h-3.5" /> Gửi báo cáo hiện trường
@@ -114,7 +139,7 @@ export const TeamLeadProjectView: React.FC<Props> = ({ projectId, onBack, onSend
           <h3 className="text-sm font-bold text-[#0D1A36]">Nhân sự được phân công trong ngày</h3>
           <div className="flex items-center gap-1.5 text-xs">
             <button type="button" onClick={() => setDay(addDays(day, -1))} className="px-2 py-1 rounded border border-slate-300 cursor-pointer">‹ Ngày trước</button>
-            <input type="date" value={day} onChange={e => setDay(e.target.value)} className="px-2.5 py-1 bg-slate-50 border border-slate-300 rounded-lg font-mono" />
+            <DateInput value={day} onChange={e => setDay(e.target.value)} className="px-2.5 py-1 bg-slate-50 border border-slate-300 rounded-lg font-mono" />
             <button type="button" onClick={() => setDay(addDays(day, 1))} className="px-2 py-1 rounded border border-slate-300 cursor-pointer">Ngày sau ›</button>
           </div>
         </div>
@@ -197,8 +222,8 @@ export const TeamLeadProjectView: React.FC<Props> = ({ projectId, onBack, onSend
               <div key={e.id} className="bg-white rounded-xl border border-purple-200 p-4 shadow-xs text-xs space-y-2">
                 <div className="flex items-center justify-between flex-wrap gap-2">
                   <div>
-                    <div className="font-bold text-slate-900">{e.contractorName}</div>
-                    <div className="text-slate-500">Đầu mối: {sub?.contactPerson} · {sub?.phone} · {t?.code} · <span className="font-mono">{formatDate(e.startDate)} – {formatDate(e.dueDate)}</span> · Đã cập nhật {prog.x}/{prog.y} ngày</div>
+                    <div className="font-bold text-slate-900">{e.contractorName} <span className="font-normal text-slate-500">· {t ? `${t.code} ${t.title}` : 'Khoán theo dự án'} · {e.workerCount ?? '—'} người</span></div>
+                    <div className="text-slate-500">Đầu mối: {sub?.contactPerson} · {sub?.phone} · <span className="font-mono">{formatDate(e.startDate)} – {formatDate(e.dueDate)}</span> · Đã cập nhật {prog.x}/{prog.y} ngày</div>
                   </div>
                   <button type="button" onClick={() => setDailyFor(e.id)} className="px-3 py-1.5 rounded-lg bg-[#152A55] text-white font-semibold cursor-pointer">Cập nhật nhân sự trong ngày</button>
                 </div>

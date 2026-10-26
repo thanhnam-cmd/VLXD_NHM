@@ -810,7 +810,7 @@ ON CONFLICT (id) DO NOTHING;
 
 -- Bảng 22: cau_hinh (6 tham số hệ thống theo đặc tả)
 INSERT INTO cau_hinh (khoa_cau_hinh, gia_tri, mo_ta, thoi_diem_cap_nhat) VALUES
-('THOI_DIEM_TRA_CUU', '2026-10-12 09:00:00', 'Thời điểm tra cứu cố định phục vụ chấm điểm và chạy kịch bản thử nghiệm', '2026-10-12 09:00:00'),
+('THOI_DIEM_TRA_CUU', '', 'Thời điểm tra cứu; để trống thì dùng giờ máy, nhập giá trị để cố định khi nhập dữ liệu mẫu', '2026-10-12 09:00:00'),
 ('SO_NGAY_SAP_DEN_HAN', '7', 'Số ngày tính là sắp đến hạn', '2026-10-12 09:00:00'),
 ('THOI_GIAN_HET_PHIEN_PHUT', '30', 'Thời gian tự động kết thúc phiên làm việc khi người dùng không tương tác (phút)', '2026-10-12 09:00:00'),
 ('DUNG_LUONG_TAI_LEN_TOI_DA_MB', '50', 'Dung lượng tải lên tối đa cho một tệp tài liệu hoặc bản vẽ (MB)', '2026-10-12 09:00:00'),

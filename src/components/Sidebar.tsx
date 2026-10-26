@@ -190,12 +190,12 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange, curren
 
   const sections: { title: string; items: MenuItem[] }[] =
     role === 'QUAN_TRI'
-      ? [{ title: 'PHÂN HỆ NGHIỆP VỤ (TỔNG QUẢN)', items: BUSINESS_MENU }, { title: 'QUẢN TRỊ HỆ THỐNG', items: ADMIN_MENU }]
+      ? [{ title: 'NGHIỆP VỤ', items: BUSINESS_MENU }, { title: 'QUẢN TRỊ', items: ADMIN_MENU }]
       : role === 'DOI_TRUONG'
-        ? [{ title: 'PHÂN HỆ NGHIỆP VỤ', items: TEAM_LEAD_MENU }]
+        ? [{ title: 'NGHIỆP VỤ', items: TEAM_LEAD_MENU }]
         : role === 'BAN_GIAM_DOC'
-          ? [{ title: 'PHÂN HỆ NGHIỆP VỤ', items: DIRECTOR_MENU }]
-          : [{ title: 'PHÂN HỆ NGHIỆP VỤ', items: BUSINESS_MENU }];
+          ? [{ title: 'NGHIỆP VỤ', items: DIRECTOR_MENU }]
+          : [{ title: 'NGHIỆP VỤ', items: BUSINESS_MENU }];
 
   const footer =
     role === 'QUAN_TRI' ? 'Hệ thống NMH · Quản trị toàn quyền'

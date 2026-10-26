@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { DateInput } from '../components/inputs.tsx';
 import type { ExternalAssignment, ExternalSubcontractor } from '../types/index.ts';
 import { useStore } from '../state/store.tsx';
 import { DEMO_QUERY_TIME } from '../utils/progressCalculator.ts';
@@ -135,11 +136,11 @@ const ExternalAssignModal: React.FC<{ ext?: ExternalAssignment; onClose: () => v
       <div className="grid grid-cols-2 gap-3">
         <div>
           <Label required>Bắt đầu dự kiến</Label>
-          <div className="flex gap-1.5"><input type="date" value={sDate} onChange={e => setSDate(e.target.value)} className={`${inputCls} font-mono`} /><input type="time" value={sTime} onChange={e => setSTime(e.target.value)} className={`${inputCls} font-mono w-24`} /></div>
+          <DateInput value={sDate} onChange={e => setSDate(e.target.value)} className={inputCls} />
         </div>
         <div>
           <Label required>Kết thúc dự kiến</Label>
-          <div className="flex gap-1.5"><input type="date" value={eDate} onChange={e => setEDate(e.target.value)} className={`${inputCls} font-mono`} /><input type="time" value={eTime} onChange={e => setETime(e.target.value)} className={`${inputCls} font-mono w-24`} /></div>
+          <DateInput value={eDate} onChange={e => setEDate(e.target.value)} className={inputCls} />
         </div>
       </div>
       <div className="grid grid-cols-3 gap-3">
@@ -186,7 +187,7 @@ export const DailyStaffingModal: React.FC<{ ext: ExternalAssignment; onClose: ()
         }}>Lưu cập nhật</button>
       </>}>
       <div className="grid grid-cols-2 gap-3">
-        <div><Label required>Ngày làm việc</Label><input type="date" value={date} onChange={e => setDate(e.target.value)} className={`${inputCls} font-mono`} /></div>
+        <div><Label required>Ngày làm việc</Label><DateInput value={date} onChange={e => setDate(e.target.value)} className={`${inputCls} font-mono`} /></div>
         <div><Label required>Số nhân sự có mặt</Label><input type="number" min={0} max={200} value={count} onChange={e => setCount(e.target.value)} className={`${inputCls} font-mono`} /><Hint>0 nghĩa là ngày nghỉ</Hint></div>
       </div>
       {existing && <Hint>Ngày này đã có bản ghi; lưu lại sẽ sửa bản ghi và ghi nhật ký "Điều chỉnh".</Hint>}
@@ -212,13 +213,14 @@ export const ExternalDetailDrawer: React.FC<{ extId: string; onClose: () => void
   const prog = staffingProgress(ext);
   const isLead = isTeamLeadRole(currentUser);
   const isManager = canOperate(currentUser);
-  const isCoordinator = isLead && currentUser.staffId === ext.nmhCoordinatorId;
+  // Phần việc khoán theo dự án: mọi đội trưởng có công việc trong dự án đều cập nhật được nhân sự theo ngày
+  const isCoordinator = isLead && (currentUser.staffId === ext.nmhCoordinatorId || !ext.taskId);
   return (
     <Drawer title={ext.contractorName} subtitle={<span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${st.cls}`}>{st.label}</span>} onClose={onClose} width="max-w-2xl">
       <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/60 space-y-1">
         <div className="flex items-center justify-between">
-          <div className="font-bold text-slate-900">{t?.code} · {p?.code} · {t?.title}</div>
-          {isManager && ext.status === 'HIEU_LUC' && <button type="button" onClick={() => setEdit(true)} className="px-2.5 py-1 rounded-lg border border-slate-300 bg-white font-semibold cursor-pointer">Sửa phần việc</button>}
+          <div className="font-bold text-slate-900">{t ? `${t.code} · ${p?.code} · ${t.title}` : `${p?.code} · Khoán theo dự án`}</div>
+          {isManager && ext.status === 'HIEU_LUC' && ext.taskId && <button type="button" onClick={() => setEdit(true)} className="px-2.5 py-1 rounded-lg border border-slate-300 bg-white font-semibold cursor-pointer">Sửa phần việc</button>}
         </div>
         <div>{ext.workDescription}</div>
         <div className="text-slate-600">Thời gian làm việc: <span className="font-mono">{formatDate(ext.startDate)} – {formatDate(ext.dueDate)}</span> ({prog.total} ngày)</div>
@@ -354,8 +356,8 @@ export const ExternalTeamsTab: React.FC = () => {
                   <span className="font-bold text-slate-900">{e.contractorName}</span>
                   <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${st.cls}`}>{st.label}</span>
                 </div>
-                <div className="font-mono text-[11px] text-slate-600">{t?.code} · {p?.code}</div>
-                <div className="font-semibold text-slate-800">{t?.title}</div>
+                <div className="font-mono text-[11px] text-slate-600">{t ? `${t.code} · ${p?.code}` : `${p?.code} · khoán theo dự án`}</div>
+                <div className="font-semibold text-slate-800">{t?.title || p?.name}</div>
                 <div className="text-slate-600">{e.workDescription}</div>
                 <div className="font-mono text-slate-500">{formatDate(e.startDate)} – {formatDate(e.dueDate)} ({prog.total} ngày)</div>
                 <div className="text-slate-500">{st.key === 'SAP' ? 'Chưa đến ngày làm việc' : `Đã cập nhật ${prog.x}/${prog.y} ngày`}</div>

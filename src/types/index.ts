@@ -277,6 +277,16 @@ export interface StaffLeave {
   cancelReason?: string;
 }
 
+/** Nhận xét của Quản lý trên một báo cáo hiện trường */
+export interface WorkLogComment {
+  id: string;
+  kind: 'NHAN_XET' | 'PHE_DUYET' | 'YEU_CAU_CAP_NHAT';
+  content: string;
+  by: string;
+  byAccountId?: string;
+  at: string;
+}
+
 export interface WorkLog {
   id: string; // "1", "2"...
   taskId: string;
@@ -297,7 +307,8 @@ export interface WorkLog {
   submittedByRole?: string;
   recordedByManager?: boolean; // Ghi nhận thay hiện trường
   externalAssignmentId?: string;
-  photos?: { name: string; dataUrl?: string; size?: number }[];
+  photos?: { name: string; dataUrl?: string; url?: string; size?: number }[];
+  comments?: WorkLogComment[]; // nhan_xet_cap_nhat: nhận xét, phê duyệt, yêu cầu cập nhật lại của Quản lý
   // Ghi chú đội thi công ngoài (không bắt buộc) – nguồn dữ liệu cho BC-04
   externalTeamId?: string;
   externalTeamCount?: number;
@@ -363,7 +374,7 @@ export interface TechDoc {
 }
 
 export interface SystemConfig {
-  evaluationTimestamp: string; // THOI_DIEM_TRA_CUU (fixed 2026-10-12 09:00:00)
+  evaluationTimestamp: string; // THOI_DIEM_TRA_CUU – để trống: dùng giờ máy; có giá trị: cố định để nhập dữ liệu mẫu
   upcomingThresholdDays: number; // SO_NGAY_SAP_DEN_HAN (7)
   sessionTimeoutMinutes: number; // THOI_GIAN_HET_PHIEN_PHUT (30)
   maxUploadSizeMB: number; // 50

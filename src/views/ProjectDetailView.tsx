@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { DateInput } from '../components/inputs.tsx';
 import { Task, TechDoc, TaskStatus, Category, Assignment } from '../types/index.ts';
 import { useStore } from '../state/store.tsx';
 import { DEMO_QUERY_TIME } from '../utils/progressCalculator.ts';
@@ -12,7 +13,7 @@ import { ProjectFormModal, ProjectStatusDialog, projectMenuItems } from '../comp
 import { CategoryFormModal, TaskFormModal, TaskStatusConfirm } from '../components/TaskDialogs.tsx';
 import { UploadDocModal, DocsTable, latestUploadAt, displayVersion } from '../components/DocDialogs.tsx';
 import { EditAssignmentModal, CancelAssignmentDialog } from '../components/AssignmentDialogs.tsx';
-import { RecordResultModal } from '../components/WorkLogDialogs.tsx';
+import { taskApprovalNote, RecordResultModal } from '../components/WorkLogDialogs.tsx';
 import type { AssignmentDraft } from './AssignmentView.tsx';
 
 interface ProjectDetailViewProps {
@@ -22,7 +23,7 @@ interface ProjectDetailViewProps {
   onOpenAssign: (draft: AssignmentDraft) => void;
   onOpenWorklogs: (taskId: string) => void;
   onOpenExternal: () => void;
-  onViewDoc: (doc: TechDoc) => void;
+  onViewDoc: (doc: TechDoc, v?: { versionNum: number }) => void;
   onDownloadDoc: (doc: TechDoc, versionNum?: number) => void;
 }
 
@@ -407,7 +408,7 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
                       const isTaskFinal = task.status === 'HOAN_THANH' || task.status === 'HUY';
                       return (
                         <div key={task.id} ref={el => { taskRefs.current[task.id] = el; }}
-                          className={`p-4 flex flex-col lg:flex-row lg:items-center justify-between gap-4 hover:bg-slate-50/60 transition-colors ${focusTaskId === task.id ? 'bg-amber-50/60' : ''}`}>
+                          className={`p-4 grid grid-cols-1 2xl:grid-cols-[minmax(0,1fr)_auto] 2xl:items-center gap-3 hover:bg-slate-50/60 transition-colors ${focusTaskId === task.id ? 'bg-amber-50/60' : ''}`}>
                           <div className="space-y-1.5 flex-1 min-w-0">
                             <div className="flex items-center gap-2 flex-wrap">
                               <span className="font-mono text-[11px] text-slate-500">{task.code}</span>
@@ -425,12 +426,21 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
                                 <span className="text-slate-700">{log.content.length > 110 ? log.content.slice(0, 110) + '…' : log.content} <span className="text-slate-400">({formatDateTime(log.submittedAt)} · {log.submittedByStaffName})</span></span>
                               ) : <span className="text-slate-400">Chưa có cập nhật kết quả</span>}
                             </button>
+                            {(() => {
+                              const n = taskApprovalNote(task.id, workLogs, task);
+                              if (!n || n.key === 'DA_XAC_NHAN') return null;
+                              return (
+                                <button type="button" onClick={() => onOpenWorklogs(task.id)} className={`inline-block px-2 py-1 rounded-lg text-[11px] font-semibold cursor-pointer ${n.cls}`}>
+                                  {n.key === 'CHO_XAC_NHAN' ? 'Đội trưởng đề nghị hoàn thành – chờ bạn xác nhận' : n.label}{n.comment && <span className="font-normal">: {n.comment}</span>}
+                                </button>
+                              );
+                            })()}
                           </div>
 
-                          <div className="flex items-center gap-3 shrink-0 flex-wrap lg:flex-nowrap">
-                            <div className="text-left text-xs">
+                          <div className="grid grid-cols-2 sm:grid-cols-[150px_110px_150px_auto] items-center gap-3 shrink-0">
+                            <div className="text-left text-xs min-w-0">
                               <div className="text-[10px] text-slate-400 font-medium">Phụ trách chính</div>
-                              <div className="font-semibold text-slate-800">{staffName(task.assigneeId)}</div>
+                              <div className="font-semibold text-slate-800 truncate">{staffName(task.assigneeId)}</div>
                             </div>
                             <div className="text-left text-xs">
                               <div className="text-[10px] text-slate-400 font-medium">Hạn hoàn thành</div>
@@ -442,7 +452,7 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
                               <div className="text-[10px] text-slate-400 font-medium">Trạng thái</div>
                               {canEdit && !isTaskFinal ? (
                                 <select value={task.status} onChange={(e) => onStatusSelect(task, e.target.value as TaskStatus)}
-                                  className={`text-xs px-2.5 py-1 rounded-lg border font-semibold ${task.status === 'DANG_THUC_HIEN' ? 'bg-blue-50 text-blue-800 border-blue-300' : 'bg-slate-50 text-slate-700 border-slate-300'}`}>
+                                  className={`w-full text-xs px-2.5 py-1 rounded-lg border font-semibold ${task.status === 'DANG_THUC_HIEN' ? 'bg-blue-50 text-blue-800 border-blue-300' : 'bg-slate-50 text-slate-700 border-slate-300'}`}>
                                   <option value="CHUA_BAT_DAU">Chưa bắt đầu</option>
                                   <option value="DANG_THUC_HIEN">Đang thực hiện</option>
                                   <option value="HOAN_THANH">Hoàn thành</option>
@@ -451,7 +461,7 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
                               ) : <StatusBadge status={task.status} kind="task" />}
                             </div>
                             {canEdit && (
-                              <div className="flex items-center gap-1.5">
+                              <div className="flex items-center justify-end gap-1.5 w-[230px]">
                                 <button type="button" disabled={!canAssign(task)}
                                   title={!canAssign(task) ? 'Công việc đã Hoàn thành/Hủy hoặc dự án không nhận phân công mới' : undefined}
                                   onClick={() => onOpenAssign({ projectId: project.id, taskId: task.id })}
@@ -495,7 +505,7 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
           <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs">
             <h3 className="text-sm font-bold text-[#0D1A36] mb-3">Nhân sự nội bộ được phân công</h3>
             <div className="flex flex-wrap gap-2 mb-3 text-xs">
-              <input type="date" value={asgFilter.date} onChange={e => setAsgFilter({ ...asgFilter, date: e.target.value })} className="px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg font-mono" />
+              <DateInput value={asgFilter.date} onChange={e => setAsgFilter({ ...asgFilter, date: e.target.value })} className="px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg font-mono" />
               <select value={asgFilter.staffId} onChange={e => setAsgFilter({ ...asgFilter, staffId: e.target.value })} className="px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg">
                 <option value="">Mọi nhân sự</option>
                 {Array.from(new Set(projectAssignments.map(a => a.staffId))).map(id => <option key={id} value={id}>{staffName(id)}</option>)}

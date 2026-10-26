@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { DateInput } from '../components/inputs.tsx';
 import { Staff, StaffSkill, Assignment, Team } from '../types/index.ts';
 import { useStore } from '../state/store.tsx';
 import { DEMO_QUERY_TIME } from '../utils/progressCalculator.ts';
@@ -257,8 +258,8 @@ const StaffFormModal: React.FC<{ staff?: Staff; onClose: () => void; onSaved: (m
             <option value="inactive">Ngừng làm việc</option>
           </select>
         </div>
-        <div><Label>Ngày bắt đầu làm việc</Label><input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className={`${inputCls} font-mono`} /></div>
-        {!active && <div><Label required>Ngày ngừng làm việc</Label><input type="date" value={leaveDate} onChange={e => setLeaveDate(e.target.value)} className={`${inputCls} font-mono`} /></div>}
+        <div><Label>Ngày bắt đầu làm việc</Label><DateInput value={startDate} onChange={e => setStartDate(e.target.value)} className={`${inputCls} font-mono`} /></div>
+        {!active && <div><Label required>Ngày ngừng làm việc</Label><DateInput value={leaveDate} onChange={e => setLeaveDate(e.target.value)} className={`${inputCls} font-mono`} /></div>}
       </div>
       <div><Label>Ghi chú</Label><textarea rows={2} maxLength={255} value={notes} onChange={e => setNotes(e.target.value)} className={inputCls} /></div>
       {ongoing.length > 0 && (

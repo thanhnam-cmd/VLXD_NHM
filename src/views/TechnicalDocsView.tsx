@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { DateInput } from '../components/inputs.tsx';
 import { TechDoc } from '../types/index.ts';
 import { useStore } from '../state/store.tsx';
 import { UploadCloud, Search } from 'lucide-react';
@@ -7,7 +8,7 @@ import { DocsTable, UploadDocModal, latestUploadAt } from '../components/DocDial
 import { DOC_TYPE_LABEL, canOperate } from '../utils/domain.ts';
 
 interface TechnicalDocsViewProps {
-  onOpenDocViewer: (doc: TechDoc) => void;
+  onOpenDocViewer: (doc: TechDoc, v?: { versionNum: number }) => void;
   onDownloadDoc: (doc: TechDoc, versionNum?: number) => void;
 }
 
@@ -70,7 +71,7 @@ export const TechnicalDocsView: React.FC<TechnicalDocsViewProps> = ({ onOpenDocV
           {tasks.filter(t => (!fProject || t.projectId === fProject) && scoped.docs.some(d => d.taskId === t.id)).map(t => <option key={t.id} value={t.id}>{t.code} · {t.title}</option>)}
         </select>
         <label className="flex items-center gap-1.5 text-slate-600">Cập nhật từ
-          <input type="date" value={fFrom} onChange={e => { setFFrom(e.target.value); setPage(1); }} className="px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg font-mono" />
+          <DateInput value={fFrom} onChange={e => { setFFrom(e.target.value); setPage(1); }} className="px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg font-mono" />
         </label>
       </div>
 

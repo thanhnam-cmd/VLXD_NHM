@@ -4,7 +4,7 @@ import path from 'path';
 import fs from 'fs';
 import dotenv from 'dotenv';
 import pg from 'pg';
-import { bootstrap, syncEntity, ensureSchemaExtensions, verifyPassword, setPassword } from './server-db.ts';
+import { bootstrap, syncEntity, ensureSchemaExtensions, verifyPassword, setPassword, saveFile, readFile } from './server-db.ts';
 
 dotenv.config();
 
@@ -175,6 +175,37 @@ app.post('/api/database/init', async (req, res) => {
 });
 
 // 3. Nạp toàn bộ dữ liệu nghiệp vụ từ PostgreSQL cho giao diện
+// Tải tệp lên (thân yêu cầu là nội dung tệp; tên tệp trong tiêu đề X-File-Name, đã mã hóa URI)
+app.post('/api/files', express.raw({ type: () => true, limit: '120mb' }), async (req, res) => {
+  if (!pool) return res.status(400).json({ success: false, message: 'Chưa kết nối CSDL, tệp chưa được lưu.' });
+  try {
+    const name = decodeURIComponent(String(req.headers['x-file-name'] || 'tep'));
+    const mime = String(req.headers['x-file-type'] || req.headers['content-type'] || 'application/octet-stream');
+    const body = req.body as Buffer;
+    if (!Buffer.isBuffer(body) || body.length === 0) return res.status(400).json({ success: false, message: 'Tệp rỗng.' });
+    const saved = await saveFile(pool, name, mime, body);
+    return res.json({ success: true, ...saved });
+  } catch (err: any) {
+    console.error('[API] /api/files error:', err.message);
+    return res.status(500).json({ success: false, message: 'Không lưu được tệp: ' + err.message });
+  }
+});
+
+// Xem / tải tệp đã lưu (?download=1 để tải về với tên gốc)
+app.get('/api/files/:id', async (req, res) => {
+  if (!pool) return res.status(404).send('Không có CSDL');
+  try {
+    const f = await readFile(pool, parseInt(req.params.id, 10));
+    if (!f) return res.status(404).send('Không tìm thấy tệp');
+    res.setHeader('Content-Type', f.mime || 'application/octet-stream');
+    res.setHeader('Cache-Control', 'private, max-age=86400');
+    res.setHeader('Content-Disposition', `${req.query.download ? 'attachment' : 'inline'}; filename*=UTF-8''${encodeURIComponent(f.name)}`);
+    return res.send(f.data);
+  } catch (err: any) {
+    return res.status(500).send('Lỗi đọc tệp');
+  }
+});
+
 app.get('/api/bootstrap', async (req, res) => {
   if (!pool) return res.json({ useClientStorage: true });
   try {

@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import type { Category, TechDoc, TechDocVersion } from '../types/index.ts';
 import { useStore } from '../state/store.tsx';
+import { dbService } from '../services/db.ts';
 import { Modal, Drawer, Label, Hint, ErrorBox, inputCls, btnPrimary, btnSecondary, ConfirmDialog } from './ui.tsx';
 import { DOC_TYPE_LABEL, formatDateTime, canOperate } from '../utils/domain.ts';
 import { MoreVertical, UploadCloud, X } from 'lucide-react';
@@ -26,17 +27,22 @@ export const displayVersion = (d: TechDoc): TechDocVersion | undefined => {
   return v.find(x => x.isSelectedForExecution) || [...v].sort((a, b) => b.versionNum - a.versionNum)[0];
 };
 export const latestUploadAt = (d: TechDoc) => (d.versions || []).reduce((m, v) => (v.uploadedAt > m ? v.uploadedAt : m), d.createdAt || d.date || '');
-export const canPreview = (v?: TechDocVersion) => !!v && (v.fileType === 'PDF' || v.fileType === 'ANH');
+export const canPreview = (v?: TechDocVersion) => !!v;
 export const NO_PREVIEW_MSG = 'Định dạng này chưa xem trực tiếp được. Vui lòng tải về.';
 
-type PickedFile = { name: string; size: number; fileType: string; preview?: string };
+type PickedFile = { name: string; size: number; fileType: string; preview?: string; file?: File; storedPath?: string };
+
+/** Tải các tệp đã chọn lên máy chủ (lưu trong CSDL); khi chưa kết nối CSDL thì giữ nguyên thông tin tệp */
+const uploadPicked = async (files: PickedFile[]) => Promise.all(files.map(async f => ({
+  ...f, storedPath: f.file ? (await dbService.uploadFile(f.file, f.name)) || undefined : undefined
+})));
 
 const FilePicker: React.FC<{ files: PickedFile[]; setFiles: (f: PickedFile[]) => void; multiple?: boolean; maxMB: number }> = ({ files, setFiles, multiple = true, maxMB }) => {
   const ref = useRef<HTMLInputElement>(null);
   const add = (list: FileList | null) => {
     if (!list) return;
     const picked: PickedFile[] = Array.from(list).map(f => ({
-      name: f.name, size: f.size, fileType: detectFileType(f.name),
+      name: f.name, size: f.size, fileType: detectFileType(f.name), file: f,
       preview: f.type.startsWith('image/') ? URL.createObjectURL(f) : undefined
     }));
     setFiles(multiple ? [...files, ...picked].slice(0, 20) : picked.slice(0, 1));
@@ -89,14 +95,24 @@ export const UploadDocModal: React.FC<{ fixedProjectId?: string; contextCategory
   const [changeNotes, setChangeNotes] = useState('');
   const [desc, setDesc] = useState('');
   const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
 
   const projectOptions = visibleProjects.filter(p => p.status !== 'HUY');
   const projTasks = tasks
     .filter(t => t.projectId === projectId && t.status !== 'HUY')
     .sort((a, b) => (contextCategory ? (a.categoryId === contextCategory.id ? -1 : 0) - (b.categoryId === contextCategory.id ? -1 : 0) : 0));
 
-  const submit = () => {
-    const r = uploadDocs({ projectId, taskId: taskId || undefined, type, title, label: label.trim(), scope, description: desc.trim(), changeNotes: changeNotes.trim() }, files);
+  const submit = async () => {
+    // Kiểm tra nhanh trước khi gửi tệp lên máy chủ
+    if (!projectId) return setErr('Vui lòng chọn dự án.');
+    if (!type) return setErr('Vui lòng chọn loại hồ sơ.');
+    if (!title.trim()) return setErr('Vui lòng nhập tên hồ sơ.');
+    if (files.length === 0) return setErr('Vui lòng chọn tệp.');
+    if (scope === 'RIENG_CONG_VIEC' && !taskId) return setErr('Vui lòng chọn công việc liên quan.');
+    setBusy(true); setErr(null);
+    const uploaded = await uploadPicked(files);
+    setBusy(false);
+    const r = uploadDocs({ projectId, taskId: taskId || undefined, type, title, label: label.trim(), scope, description: desc.trim(), changeNotes: changeNotes.trim() }, uploaded);
     if (!r.ok) return setErr(r.message);
     onSaved(r.message);
   };
@@ -108,7 +124,7 @@ export const UploadDocModal: React.FC<{ fixedProjectId?: string; contextCategory
       size="lg"
       footer={<>
         <button type="button" className={btnSecondary} onClick={onClose}>Hủy bỏ</button>
-        <button type="button" className={btnPrimary} onClick={submit}>Tải lên</button>
+        <button type="button" className={btnPrimary} disabled={busy} onClick={submit}>{busy ? 'Đang tải tệp lên…' : 'Tải lên'}</button>
       </>}
     >
       <p className="text-[10px] text-slate-500">(*) Trường bắt buộc</p>
@@ -192,18 +208,22 @@ export const AddVersionModal: React.FC<{ doc: TechDoc; onClose: () => void; onSa
   const [label, setLabel] = useState('');
   const [notes, setNotes] = useState('');
   const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
   const p = projects.find(x => x.id === doc.projectId);
   const t = tasks.find(x => x.id === doc.taskId);
   return (
     <Modal title="Bổ sung phiên bản" subtitle={doc.title} onClose={onClose}
       footer={<>
         <button type="button" className={btnSecondary} onClick={onClose}>Hủy bỏ</button>
-        <button type="button" className={btnPrimary} onClick={() => {
+        <button type="button" className={btnPrimary} disabled={busy} onClick={async () => {
           if (files.length === 0) return setErr('Vui lòng chọn tệp.');
-          const r = addDocVersion(doc.id, files[0], label.trim(), notes.trim());
+          setBusy(true); setErr(null);
+          const [up] = await uploadPicked(files.slice(0, 1));
+          setBusy(false);
+          const r = addDocVersion(doc.id, up, label.trim(), notes.trim());
           if (!r.ok) return setErr(r.message);
           onSaved(r.message);
-        }}>Tải lên</button>
+        }}>{busy ? 'Đang tải tệp lên…' : 'Tải lên'}</button>
       </>}>
       <div className="grid grid-cols-2 gap-2 p-2 bg-slate-50 rounded-lg border border-slate-200 text-[11px]">
         <div>Dự án: <strong>{p?.code}</strong></div>
@@ -343,7 +363,7 @@ export const VersionsDrawer: React.FC<{
 /** Bảng hồ sơ kỹ thuật dùng chung cho MH-13 và tab Hồ sơ kỹ thuật của MH-08 */
 export const DocsTable: React.FC<{
   docs: TechDoc[];
-  onView: (doc: TechDoc) => void;
+  onView: (doc: TechDoc, v?: TechDocVersion) => void;
   onDownload: (doc: TechDoc, versionNum?: number) => void;
   onMessage: (msg: string, type?: 'success' | 'error') => void;
 }> = ({ docs, onView, onDownload, onMessage }) => {
@@ -433,7 +453,7 @@ export const DocsTable: React.FC<{
         <VersionsDrawer
           doc={versions}
           onClose={() => setVersions(null)}
-          onView={(d) => onView(d)}
+          onView={(d, v) => onView(d, v)}
           onDownload={(d, n) => onDownload(d, n)}
           onMessage={(m) => onMessage(m, m === NO_PREVIEW_MSG ? 'error' : 'success')}
         />

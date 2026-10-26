@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { DateInput } from '../components/inputs.tsx';
 import { WorkLog } from '../types/index.ts';
 import { useStore } from '../state/store.tsx';
 import { ClipboardCheck, Search } from 'lucide-react';
@@ -59,6 +60,7 @@ export const WorkLogView: React.FC<WorkLogViewProps> = ({ initialStatus, initial
     const lbl = getLogLabel(w, t).key;
     if (fStatus === 'pending' && lbl !== 'CHO_XAC_NHAN') return false;
     if (fStatus === 'confirmed' && lbl !== 'DA_XAC_NHAN') return false;
+    if (fStatus === 'rework' && lbl !== 'YEU_CAU_CAP_NHAT') return false;
     if (fStatus === 'issues' && !w.issuesFaced) return false;
     return true;
   }).sort((a, b) => b.submittedAt.localeCompare(a.submittedAt));
@@ -88,13 +90,14 @@ export const WorkLogView: React.FC<WorkLogViewProps> = ({ initialStatus, initial
           <select value={fStatus} onChange={e => setFStatus(e.target.value)} className="px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg">
             <option value="all">Tất cả</option>
             <option value="pending">Chờ Quản lý xác nhận</option>
+            <option value="rework">Quản lý yêu cầu cập nhật lại</option>
             <option value="confirmed">Quản lý đã xác nhận hoàn thành</option>
             <option value="issues">Có vướng mắc</option>
           </select>
         </>
       )}
-      <input type="date" value={fFrom} onChange={e => setFFrom(e.target.value)} className="px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg font-mono" />
-      <input type="date" value={fTo} onChange={e => setFTo(e.target.value)} className="px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg font-mono" />
+      <DateInput value={fFrom} onChange={e => setFFrom(e.target.value)} className="px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg font-mono" />
+      <DateInput value={fTo} onChange={e => setFTo(e.target.value)} className="px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg font-mono" />
       <span className="ml-auto text-xs font-mono font-bold px-2 py-0.5 rounded bg-slate-100 text-slate-700">{rows.length} bản ghi</span>
     </div>
   );
@@ -147,7 +150,7 @@ export const WorkLogView: React.FC<WorkLogViewProps> = ({ initialStatus, initial
         </div>
       )}
 
-      {viewLog && <WorkLogDetailDrawer log={viewLog} allowFollowUp={canManage && !isDirector} onClose={() => setViewLog(null)} onMessage={toast.show} />}
+      {viewLog && <WorkLogDetailDrawer log={viewLog} allowFollowUp={(canManage && !isDirector) || isLead} onClose={() => setViewLog(null)} onMessage={toast.show} />}
       {approveLog && <ApproveModal log={approveLog} onClose={() => setApproveLog(null)} onDone={(m) => { setApproveLog(null); toast.show(m); }} />}
       {recordOpen && <RecordResultModal initialProjectId={fProject || undefined} initialTaskId={fTask || undefined} onClose={() => setRecordOpen(false)} onSaved={(m) => { setRecordOpen(false); toast.show(m); }} />}
       {followUp && (

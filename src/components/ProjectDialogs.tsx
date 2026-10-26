@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from 'react';
+import { DateInput, SearchSelect } from './inputs.tsx';
 import type { Project, Customer, ProjectStatus, ProjectExternalTeam } from '../types/index.ts';
 import { Plus, Trash2, Building2 } from 'lucide-react';
 import { useStore } from '../state/store.tsx';
@@ -92,7 +93,6 @@ export const ProjectFormModal: React.FC<{ project?: Project; onClose: () => void
   const [code, setCode] = useState(project?.code || nextCode(projects.map(p => p.code), `NMH-${year}-`, 3));
   const [name, setName] = useState(project?.name || '');
   const [customerId, setCustomerId] = useState(project?.clientId || '');
-  const [customerQuery, setCustomerQuery] = useState('');
   const [place, setPlace] = useState(project?.place || '');
   const [scope, setScope] = useState(project?.scopeSummary || '');
   const [startDate, setStartDate] = useState(project?.startDate?.slice(0, 10) || '');
@@ -106,10 +106,6 @@ export const ProjectFormModal: React.FC<{ project?: Project; onClose: () => void
   const setExt = (i: number, k: 'contractorId' | 'workerCount', v: string) => setExtTeams(prev => prev.map((x, j) => j === i ? { ...x, [k]: v } : x));
 
   const managers = staff.filter(s => s.roleTitle === 'QUAN_LY' && s.isActive);
-  const filteredCustomers = useMemo(() => {
-    const q = customerQuery.trim().toLowerCase();
-    return customers.filter(c => !q || c.code.toLowerCase().includes(q) || c.name.toLowerCase().includes(q) || c.id === customerId);
-  }, [customers, customerQuery, customerId]);
   const customer = customers.find(c => c.id === customerId);
 
   const submit = () => {
@@ -189,13 +185,9 @@ export const ProjectFormModal: React.FC<{ project?: Project; onClose: () => void
               + Thêm khách hàng mới
             </button>
           </div>
-          <div className="grid grid-cols-5 gap-2">
-            <input value={customerQuery} onChange={e => setCustomerQuery(e.target.value)} placeholder="Tìm mã, tên..." className={`${inputCls} col-span-2`} />
-            <select value={customerId} onChange={e => setCustomerId(e.target.value)} className={`${inputCls} col-span-3`}>
-              <option value="">-- Chọn khách hàng --</option>
-              {filteredCustomers.map(c => <option key={c.id} value={c.id}>{c.code} – {c.name}</option>)}
-            </select>
-          </div>
+          <SearchSelect value={customerId} onChange={setCustomerId} className={inputCls}
+            placeholder="Gõ mã hoặc tên khách hàng rồi bấm chọn…"
+            options={customers.map(c => ({ value: c.id, label: `${c.code} – ${c.name}`, sub: [c.contactPerson, c.phone].filter(Boolean).join(' · ') }))} />
           {customer && (
             <Hint>Đầu mối: <strong>{customer.contactPerson || '—'}</strong> · {customer.phone || '—'} (lấy từ hồ sơ khách hàng)</Hint>
           )}
@@ -211,12 +203,12 @@ export const ProjectFormModal: React.FC<{ project?: Project; onClose: () => void
         <div className="grid grid-cols-2 gap-3">
           <div>
             <Label required>Ngày bắt đầu dự kiến</Label>
-            <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className={`${inputCls} font-mono`} />
+            <DateInput value={startDate} onChange={e => setStartDate(e.target.value)} className={`${inputCls} font-mono`} />
             <Hint>dd/mm/yyyy · giờ mặc định 08:00</Hint>
           </div>
           <div>
             <Label required>Ngày kết thúc dự kiến</Label>
-            <input type="date" value={dueDate} onChange={e => setDueDate(e.target.value)} className={`${inputCls} font-mono`} />
+            <DateInput value={dueDate} onChange={e => setDueDate(e.target.value)} className={`${inputCls} font-mono`} />
             <Hint>dd/mm/yyyy · giờ mặc định 17:00</Hint>
           </div>
         </div>

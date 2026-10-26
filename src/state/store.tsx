@@ -6,6 +6,7 @@ import type {
   Assignment,
   StaffLeave,
   WorkLog,
+  WorkLogComment,
   TechDoc,
   TechDocVersion,
   UserAccount,
@@ -72,6 +73,13 @@ const useStoreState = () => {
   // ---------- Dữ liệu nền ----------
   const [config, setConfig] = useState<SystemConfig>(() => dbService.getConfig());
   applyQueryConfig(config.evaluationTimestamp, config.upcomingThresholdDays);
+  // Giờ thực: cập nhật mỗi phút để cảnh báo quá hạn, sắp đến hạn luôn theo giờ máy
+  const [, setClock] = useState(0);
+  useEffect(() => {
+    if (config.evaluationTimestamp) return;
+    const id = window.setInterval(() => setClock(c => c + 1), 60000);
+    return () => window.clearInterval(id);
+  }, [config.evaluationTimestamp]);
 
   const [accounts, setAccounts] = useState<UserAccount[]>(() => dbService.getAccounts().map(normalizeAccount));
   const [projects, setProjects] = useState<Project[]>(() => dbService.getProjects().map(normalizeProject));
@@ -381,10 +389,40 @@ const useStoreState = () => {
   };
 
   // ---------- Dự án (MH-02, MH-07, MH-08) ----------
+  /**
+   * Mỗi đội khoán ngoài gắn với dự án có một phần việc "khoán theo dự án" (không gắn công việc cụ thể)
+   * để Đội trưởng, Quản lý cập nhật nhân sự theo ngày và lên báo cáo BC-04. Bỏ đội khỏi dự án thì phần việc chuyển Đã hủy.
+   */
+  const syncProjectExternals = (p: Project) => {
+    const links = p.externalTeams || [];
+    setExternalAssignments(prev => {
+      let next = prev.map(e => (!e.taskId && e.projectId === p.id && e.status === 'HIEU_LUC' && !links.some(l => l.contractorId === e.contractorId))
+        ? { ...e, status: 'HUY' as const, cancelReason: 'Bỏ đội khỏi dự án', cancelledAt: nowDb() } : e);
+      links.forEach(l => {
+        const sub = subcontractors.find(c => c.id === l.contractorId);
+        const ix = next.findIndex(e => !e.taskId && e.projectId === p.id && e.contractorId === l.contractorId && e.status === 'HIEU_LUC');
+        // Đội đã có phần việc giao theo công việc trong dự án thì không tạo thêm phần việc khoán theo dự án
+        const hasTaskLevel = next.some(e => e.taskId && e.contractorId === l.contractorId && e.status === 'HIEU_LUC'
+          && (e.projectId || tasks.find(t => t.id === e.taskId)?.projectId) === p.id);
+        if (ix >= 0) {
+          next[ix] = { ...next[ix], workerCount: l.workerCount, startDate: p.startDate, dueDate: p.dueDate, contractorName: sub?.companyName || next[ix].contractorName };
+        } else if (!hasTaskLevel && p.status !== 'HOAN_THANH' && p.status !== 'HUY') {
+          next = [{
+            id: newId(), taskId: '', projectId: p.id, contractorId: l.contractorId, contractorName: sub?.companyName || '',
+            workDescription: `Khoán thi công theo dự án ${p.code}`, startDate: p.startDate, dueDate: p.dueDate,
+            workerCount: l.workerCount, nmhCoordinatorId: p.managerId, status: 'HIEU_LUC', notes: 'Tạo từ đội khoán ngoài gắn với dự án', dailyStaffing: []
+          }, ...next];
+        }
+      });
+      return next;
+    });
+  };
+
   const createProject = (data: Omit<Project, 'id' | 'status'>): OpResult<Project> => {
     if (projects.some(p => p.code.toLowerCase() === data.code.trim().toLowerCase())) return fail('Mã đã được sử dụng. Vui lòng chọn mã khác.');
     const created: Project = { ...data, code: data.code.trim(), id: newId(), status: 'LAP_KE_HOACH', createdAt: nowDb() };
     setProjects(prev => [created, ...prev]);
+    if ((created.externalTeams || []).length) syncProjectExternals(created);
     // Tự thêm vào phạm vi của chính tài khoản Quản lý đang tạo
     if (isManagerRole(currentUser)) {
       setAccounts(prev => prev.map(a => a.id === currentUser.id ? {
@@ -405,6 +443,7 @@ const useStoreState = () => {
     const outside = tasks.filter(t => t.projectId === id && t.status !== 'HUY' && (toTime(t.startDate) < toTime(start) || toTime(t.dueDate) > toTime(end)));
     if (outside.length > 0) return fail(`Còn công việc nằm ngoài thời gian mới của dự án (${outside.map(t => t.code).join(', ')}). Hãy điều chỉnh công việc trước.`);
     setProjects(prev => prev.map(p => p.id === id ? { ...p, ...data, code: p.code } : p));
+    if (data.externalTeams || old.externalTeams) syncProjectExternals({ ...old, ...data, code: old.code });
     const teamText = (list?: { contractorId: string; workerCount: number }[]) =>
       (list || []).map(x => `${subcontractors.find(c => c.id === x.contractorId)?.companyName || x.contractorId} (${x.workerCount} người)`).join('; ') || null;
     logAudit('DIEU_CHINH', 'Dự án', id, undefined,
@@ -739,6 +778,10 @@ const useStoreState = () => {
   const cancelExternalAssignment = (id: string, reason: string): OpResult => {
     if (!reason.trim()) return fail('Vui lòng nhập lý do hủy phần việc giao.');
     setExternalAssignments(prev => prev.map(e => e.id === id ? { ...e, status: 'HUY', cancelReason: reason, cancelledAt: nowDb() } : e));
+    const ce = externalAssignments.find(e => e.id === id);
+    if (ce && !ce.taskId && ce.projectId) {
+      setProjects(prev => prev.map(p => p.id === ce.projectId ? { ...p, externalTeams: (p.externalTeams || []).filter(l => l.contractorId !== ce.contractorId) } : p));
+    }
     logAudit('HUY', 'Phần việc giao ngoài', id, reason, { trang_thai: 'HIEU_LUC' }, { trang_thai: 'HUY' });
     return ok('Đã hủy phần việc giao.');
   };
@@ -785,6 +828,27 @@ const useStoreState = () => {
       recordedByManager: isManagerRole(currentUser) || isAdminRole(currentUser),
       statusVerifiedByManager: false
     };
+    if (data.externalTeamId) {
+      const day = queryTime().slice(0, 10);
+      const open = externalAssignments.filter(e => e.status === 'HIEU_LUC' && e.contractorId === data.externalTeamId
+        && (e.projectId || tasks.find(x => x.id === e.taskId)?.projectId) === data.projectId
+        && e.startDate.slice(0, 10) <= day && e.dueDate.slice(0, 10) >= day);
+      const target = open.find(e => e.id === data.externalAssignmentId) || open.find(e => e.taskId === data.taskId) || open.find(e => !e.taskId) || open[0];
+      if (target) {
+        created.externalAssignmentId = created.externalAssignmentId || target.id;
+        const count = data.externalTeamCount ?? (data.externalStaffingStatus === 'DU' || data.externalStaffingStatus === 'THUA' ? target.workerCount : undefined);
+        if (count !== undefined) {
+          const old = (target.dailyStaffing || []).find(d => d.date === day);
+          const record: ExternalDailyStaffing = {
+            date: day, presentCount: count, names: old?.names,
+            content: (data.externalTeamNote || data.content).slice(0, 300), updatedBy: actorName(), updatedAt: nowDb()
+          };
+          setExternalAssignments(prev => prev.map(x => x.id === target.id ? {
+            ...x, dailyStaffing: [...(x.dailyStaffing || []).filter(d => d.date !== day), record].sort((a, b) => a.date.localeCompare(b.date))
+          } : x));
+        }
+      }
+    }
     setWorkLogs(prev => [created, ...prev]);
     return ok(created.recordedByManager && !data.correctionForLogId ? `Đã ghi nhận kết quả cho công việc ${t.title}.` : 'Đã gửi báo cáo hiện trường.');
   };
@@ -799,13 +863,29 @@ const useStoreState = () => {
     if (t.status === 'HOAN_THANH' || t.status === 'HUY') return fail(`Công việc đã ở trạng thái ${TASK_STATUS_LABEL[t.status]}, không thể phê duyệt lại.`);
     const r = changeTaskStatus(t.id, 'HOAN_THANH', note);
     if (!r.ok) return r;
-    setWorkLogs(prev => prev.map(l => l.id === logId ? { ...l, statusVerifiedByManager: true } : l));
+    const cmt: WorkLogComment = { id: newId(), kind: 'PHE_DUYET', content: (note || '').trim() || 'Đã xác nhận hoàn thành công việc.', by: actorName(), byAccountId: currentUser.id, at: nowDb() };
+    setWorkLogs(prev => prev.map(l => l.id === logId ? { ...l, statusVerifiedByManager: true, comments: [...(l.comments || []), cmt] } : l));
     return ok(`Đã xác nhận hoàn thành công việc ${t.title}.`);
+  };
+
+  /** Quản lý nhận xét một báo cáo, hoặc yêu cầu đội trưởng cập nhật lại khi chưa đạt */
+  const addLogComment = (logId: string, kind: 'NHAN_XET' | 'YEU_CAU_CAP_NHAT', content: string): OpResult => {
+    const log = workLogs.find(l => l.id === logId);
+    if (!log) return fail('Không tìm thấy báo cáo.');
+    if (!(isManagerRole(currentUser) || isAdminRole(currentUser))) return fail('Bạn không có quyền thực hiện thao tác này.');
+    if (!content.trim()) return fail(kind === 'YEU_CAU_CAP_NHAT' ? 'Vui lòng nhập nội dung cần cập nhật lại.' : 'Vui lòng nhập nhận xét.');
+    if (content.length > 1000) return fail('Nhận xét tối đa 1.000 ký tự.');
+    const t = tasks.find(x => x.id === log.taskId);
+    if (kind === 'YEU_CAU_CAP_NHAT' && (t?.status === 'HOAN_THANH' || t?.status === 'HUY')) return fail('Công việc đã kết thúc, không thể yêu cầu cập nhật lại.');
+    const cmt: WorkLogComment = { id: newId(), kind, content: content.trim(), by: actorName(), byAccountId: currentUser.id, at: nowDb() };
+    setWorkLogs(prev => prev.map(l => l.id === logId ? { ...l, comments: [...(l.comments || []), cmt] } : l));
+    logAudit('TAO_MOI', 'Cập nhật kết quả', logId, kind === 'YEU_CAU_CAP_NHAT' ? content.trim() : undefined, null, { nhan_xet: content.trim(), cong_viec: t?.code });
+    return ok(kind === 'YEU_CAU_CAP_NHAT' ? 'Đã gửi yêu cầu cập nhật lại cho đội trưởng.' : 'Đã lưu nhận xét.');
   };
 
   // ---------- Hồ sơ kỹ thuật (MH-13, MH-08b) ----------
   const uploadDocs = (base: { projectId: string; taskId?: string; type: string; title: string; label?: string; scope: string; description?: string; changeNotes?: string },
-    files: { name: string; size: number; fileType: string }[]): OpResult => {
+    files: { name: string; size: number; fileType: string; storedPath?: string }[]): OpResult => {
     if (!base.projectId) return fail('Vui lòng chọn dự án.');
     if (!base.type) return fail('Vui lòng chọn loại hồ sơ.');
     if (!base.title.trim()) return fail('Vui lòng nhập tên hồ sơ.');
@@ -824,7 +904,7 @@ const useStoreState = () => {
         versionNum: 1,
         label: base.label || '',
         originalFileName: f.name,
-        storedPath: `ho_so/2026/${p?.code}/${f.name}`,
+        storedPath: f.storedPath || `ho_so/2026/${p?.code}/${f.name}`,
         fileType: f.fileType,
         fileSizeByte: f.size,
         fileSizeDisplay: `${(f.size / 1024 / 1024).toFixed(2)} MB`,
@@ -854,7 +934,7 @@ const useStoreState = () => {
     return ok(`Đã tải lên ${files.length} tệp.`);
   };
 
-  const addDocVersion = (docId: string, file: { name: string; size: number; fileType: string }, label?: string, changeNotes?: string): OpResult => {
+  const addDocVersion = (docId: string, file: { name: string; size: number; fileType: string; storedPath?: string }, label?: string, changeNotes?: string): OpResult => {
     const d = docs.find(x => x.id === docId);
     if (!d) return fail('Không tìm thấy hồ sơ.');
     if (!file) return fail('Vui lòng chọn tệp.');
@@ -862,7 +942,7 @@ const useStoreState = () => {
     if (file.size > config.maxUploadSizeMB * 1024 * 1024) return fail('Tệp vượt quá dung lượng cho phép.');
     const num = (d.versions || []).reduce((m, v) => Math.max(m, v.versionNum), 0) + 1;
     const v: TechDocVersion = {
-      versionNum: num, label: label || '', originalFileName: file.name, storedPath: `ho_so/2026/${d.projectCode}/${num}-${file.name}`,
+      versionNum: num, label: label || '', originalFileName: file.name, storedPath: file.storedPath || `ho_so/2026/${d.projectCode}/${num}-${file.name}`,
       fileType: file.fileType, fileSizeByte: file.size, fileSizeDisplay: `${(file.size / 1024 / 1024).toFixed(2)} MB`,
       changeNotes, uploadedAt: nowDb(), uploadedBy: actorName(), isSelectedForExecution: false
     };
@@ -907,6 +987,10 @@ const useStoreState = () => {
     if (staff.some(s => s.id !== editId && s.code.toLowerCase() === data.code.trim().toLowerCase())) return fail('Mã nhân sự đã tồn tại.');
     if (data.phone && !/^[0-9+ .]{1,20}$/.test(data.phone)) return fail('Số điện thoại không hợp lệ.');
     if (data.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(data.email)) return fail('Email không hợp lệ.');
+    if (data.isActive && data.roleTitle === 'DOI_TRUONG' && data.teamId) {
+      const other = staff.find(s => s.id !== editId && s.isActive && s.roleTitle === 'DOI_TRUONG' && s.teamId === data.teamId);
+      if (other) return fail(`Tổ đội này đã có đội trưởng là ${other.name}. Mỗi tổ đội chỉ có một đội trưởng.`);
+    }
     if (!data.isActive) {
       if (!data.leaveDate) return fail('Vui lòng nhập ngày ngừng làm việc.');
       if (editId) {
@@ -1011,6 +1095,14 @@ const useStoreState = () => {
     return ok(`Đã cập nhật phạm vi dự án của ${a.name}: ${projectIds.length} dự án.`);
   };
 
+  /** Đặt nhanh thời điểm tra cứu (Quản trị viên); chuỗi rỗng = dùng giờ máy */
+  const setQueryTime = (value: string): OpResult => {
+    if (!isAdminRole(currentUser)) return fail('Chỉ Quản trị viên được đổi thời điểm tra cứu.');
+    if (value && !/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(value)) return fail('Thời điểm tra cứu không hợp lệ.');
+    if ((config.evaluationTimestamp || '') === value) return ok(value ? 'Thời điểm tra cứu không đổi.' : 'Đang dùng giờ máy.');
+    return saveConfig({ ...config, evaluationTimestamp: value });
+  };
+
   const recordLogin = (id: string) => {
     setAccounts(prev => prev.map(a => a.id === id ? { ...a, lastLogin: nowDb() } : a));
   };
@@ -1060,7 +1152,7 @@ const useStoreState = () => {
     uploadDocs, addDocVersion, selectDocVersion, updateDocInfo,
     saveStaff,
     createAccount, updateAccount, resetPassword, setAccountLock, updateAccountScope, recordLogin, markPasswordChanged,
-    saveConfig
+    saveConfig, setQueryTime, addLogComment
   };
 };
 

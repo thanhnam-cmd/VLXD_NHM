@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { DateInput } from '../components/inputs.tsx';
 import { UserAccount, UserRole, SystemConfig, AuditLog } from '../types/index.ts';
 import { useStore } from '../state/store.tsx';
 import { dbService } from '../services/db.ts';
@@ -633,9 +634,9 @@ export const AdminView: React.FC<AdminViewProps> = ({ initialTab = 'accounts' })
       {activeTab === 'audit' && (
         <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-xs">
           <div className="px-5 py-3 bg-slate-50 border-b border-slate-200 flex flex-wrap gap-2 text-xs items-center">
-            <input type="date" value={aFrom} onChange={e => { setAFrom(e.target.value); setAPage(1); }} className="px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg font-mono" />
+            <DateInput value={aFrom} onChange={e => { setAFrom(e.target.value); setAPage(1); }} className="px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg font-mono" />
             <span>–</span>
-            <input type="date" value={aTo} onChange={e => { setATo(e.target.value); setAPage(1); }} className="px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg font-mono" />
+            <DateInput value={aTo} onChange={e => { setATo(e.target.value); setAPage(1); }} className="px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg font-mono" />
             <select value={aUser} onChange={e => { setAUser(e.target.value); setAPage(1); }} className="px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg">
               <option value="">Mọi người thực hiện</option>
               {accounts.map(a => <option key={a.id} value={a.username}>{a.username}</option>)}

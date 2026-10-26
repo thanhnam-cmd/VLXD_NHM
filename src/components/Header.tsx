@@ -22,7 +22,8 @@ import {
 import { DatabaseStatus, dbService } from '../services/db.ts';
 import { DEMO_QUERY_TIME } from '../utils/progressCalculator.ts';
 import { useStore } from '../state/store.tsx';
-import { formatDateTime } from '../utils/domain.ts';
+import { formatDateTime, isAdminRole } from '../utils/domain.ts';
+import { DateInput } from './inputs.tsx';
 import { ChangePasswordModal } from './ChangePasswordModal.tsx';
 import { useToast } from './ui.tsx';
 
@@ -50,7 +51,18 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenNotifications,
   onOpenSearch
 }) => {
-  const { config } = useStore();
+  const { config, setQueryTime } = useStore();
+  const [timeOpen, setTimeOpen] = useState(false);
+  const [qtDate, setQtDate] = useState('');
+  const [qtTime, setQtTime] = useState('');
+  const [qtErr, setQtErr] = useState<string | null>(null);
+  const canSetTime = isAdminRole(currentUser);
+  const openTime = () => { setQtDate(DEMO_QUERY_TIME.slice(0, 10)); setQtTime(DEMO_QUERY_TIME.slice(11, 16)); setQtErr(null); setTimeOpen(true); };
+  const applyTime = (value: string) => {
+    const r = setQueryTime(value);
+    if (!r.ok) return setQtErr(r.message);
+    setTimeOpen(false);
+  };
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   // Mật khẩu tạm do Quản trị viên cấp: tự mở hộp thoại đổi mật khẩu khi đăng nhập
   const [isChangePasswordOpen, setIsChangePasswordOpen] = useState(!!currentUser.mustChangePassword);
@@ -164,15 +176,30 @@ export const Header: React.FC<HeaderProps> = ({
             </button>
           )}
 
-          {/* Thời điểm tra cứu (QC-05): theo khóa THOI_DIEM_TRA_CUU, để trống thì dùng giờ thực */}
-          <div
-            className="hidden xl:flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-slate-100 text-slate-700 border border-slate-200 text-[11px]"
-            title={config.evaluationTimestamp
-              ? 'Mốc tính quá hạn, sắp đến hạn được cố định trong Cấu hình (THOI_DIEM_TRA_CUU). Để trống tham số này để dùng giờ thực.'
-              : 'Đang dùng giờ thực để tính quá hạn, sắp đến hạn.'}
-          >
-            <Clock className="w-3 h-3 text-slate-500" />
-            <span>Thời điểm tra cứu: <strong className="font-mono">{formatDateTime(DEMO_QUERY_TIME)}</strong>{!config.evaluationTimestamp && ' (giờ thực)'}</span>
+          {/* Thời điểm tra cứu (QC-05): mặc định theo giờ máy; Quản trị viên có thể cố định để nhập dữ liệu mẫu */}
+          <div className="relative hidden xl:block">
+            <button type="button" onClick={() => canSetTime && (timeOpen ? setTimeOpen(false) : openTime())}
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[11px] ${config.evaluationTimestamp ? 'bg-amber-50 text-amber-900 border-amber-300' : 'bg-slate-100 text-slate-700 border-slate-200'} ${canSetTime ? 'cursor-pointer hover:border-[#152A55]' : 'cursor-default'}`}
+              title={config.evaluationTimestamp ? 'Đang cố định thời điểm tra cứu (dùng để nhập dữ liệu mẫu).' : 'Theo giờ trên máy.'}>
+              <Clock className="w-3 h-3" />
+              <span className="font-mono font-semibold">{formatDateTime(DEMO_QUERY_TIME)}</span>
+              {config.evaluationTimestamp && <span className="font-semibold">· cố định</span>}
+            </button>
+            {timeOpen && (
+              <div className="absolute right-0 top-9 z-50 w-72 bg-white border border-slate-200 rounded-xl shadow-2xl p-3 space-y-2 text-xs">
+                <div className="font-bold text-[#0D1A36]">Thời điểm tra cứu</div>
+                <div className="text-[11px] text-slate-500">Mặc định theo giờ trên máy. Cố định một mốc khi cần nhập hoặc xem dữ liệu mẫu theo ngày khác.</div>
+                <div className="flex gap-1.5">
+                  <DateInput value={qtDate} onChange={e => setQtDate(e.target.value)} className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg" />
+                  <input type="time" value={qtTime} onChange={e => setQtTime(e.target.value)} className="w-24 px-2 py-1.5 bg-slate-50 border border-slate-300 rounded-lg font-mono" />
+                </div>
+                {qtErr && <div className="text-red-600">{qtErr}</div>}
+                <div className="flex gap-1.5 justify-end">
+                  <button type="button" onClick={() => applyTime('')} className="px-2.5 py-1.5 rounded-lg border border-slate-300 font-semibold hover:bg-slate-50 cursor-pointer">Dùng giờ máy</button>
+                  <button type="button" onClick={() => qtDate ? applyTime(`${qtDate} ${qtTime || '08:00'}:00`) : setQtErr('Vui lòng chọn ngày.')} className="px-2.5 py-1.5 rounded-lg bg-[#152A55] text-white font-semibold cursor-pointer">Cố định mốc này</button>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Chuông cảnh báo COM-01 (Quản lý, Đội trưởng) */}
