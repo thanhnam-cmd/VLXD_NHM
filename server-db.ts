@@ -112,6 +112,17 @@ export async function ensureSchemaExtensions(pool: pg.Pool) {
       thoi_diem TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
     CREATE TABLE IF NOT EXISTS moc_nang_cap (khoa VARCHAR(100) PRIMARY KEY, thoi_diem TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
+    -- Đồng bộ nhiều người dùng: phiên bản từng bản ghi (chống ghi đè) và phiên bản dữ liệu chung (để máy khác biết có thay đổi)
+    CREATE TABLE IF NOT EXISTS phien_ban_ban_ghi (
+      thuc_the VARCHAR(40) NOT NULL,
+      ban_ghi_id VARCHAR(60) NOT NULL,
+      phien_ban INT NOT NULL DEFAULT 0,
+      nguoi_sua VARCHAR(150),
+      thoi_diem TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (thuc_the, ban_ghi_id)
+    );
+    CREATE TABLE IF NOT EXISTS phien_ban_du_lieu (id INT PRIMARY KEY, so INT NOT NULL DEFAULT 0, thoi_diem TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
+    INSERT INTO phien_ban_du_lieu (id, so) VALUES (1, 0) ON CONFLICT DO NOTHING;
     ALTER TABLE phan_cong_ben_ngoai ADD COLUMN IF NOT EXISTS du_an_id INT REFERENCES du_an(id);
     ALTER TABLE phan_cong_ben_ngoai ALTER COLUMN cong_viec_id DROP NOT NULL;
     UPDATE phan_cong_ben_ngoai e SET du_an_id = cv.du_an_id FROM cong_viec cv WHERE e.cong_viec_id = cv.id AND e.du_an_id IS NULL;
@@ -395,7 +406,10 @@ export async function bootstrap(pool: pg.Pool) {
   const systemTypes = (await q(`SELECT id::text, ma AS code, ten AS name, mo_ta AS description FROM loai_he_thong ORDER BY id`))
     .map(s => ({ ...s, name: s.name === 'Hệ thống nhà thông minh' ? 'Nhà thông minh' : s.name }));
 
-  return { accounts, staff, customers, projects, categories, tasks, assignments, leaves, workLogs, docs, subcontractors, externalAssignments, auditLogs, config, teams, skills: skillCatalog, systemTypes };
+  const rowVersions: Record<string, Record<string, number>> = {};
+  (await q(`SELECT thuc_the AS e, ban_ghi_id AS id, phien_ban AS v FROM phien_ban_ban_ghi`)).forEach(r => { (rowVersions[r.e] = rowVersions[r.e] || {})[r.id] = r.v; });
+  const revision = await getRevision(pool);
+  return { accounts, staff, customers, projects, categories, tasks, assignments, leaves, workLogs, docs, subcontractors, externalAssignments, auditLogs, config, teams, skills: skillCatalog, systemTypes, versions: rowVersions, revision };
 }
 
 // ---------------------------------------------------------------------------
@@ -405,7 +419,8 @@ async function accountLookup(client: pg.PoolClient) {
   const rows = (await client.query(`SELECT id, ten_dang_nhap, ten_hien_thi FROM tai_khoan`)).rows;
   return {
     byName: (name?: string | null) => (name ? rows.find(r => r.ten_hien_thi === name)?.id ?? null : null),
-    byUsername: (u?: string | null) => (u ? rows.find(r => r.ten_dang_nhap === u)?.id ?? null : null)
+    byUsername: (u?: string | null) => (u ? rows.find(r => r.ten_dang_nhap === u)?.id ?? null : null),
+    nameOf: (u?: string | null) => (u ? rows.find(r => r.ten_dang_nhap === u)?.ten_hien_thi ?? null : null)
   };
 }
 
@@ -420,14 +435,64 @@ const upsert = async (client: pg.PoolClient, table: string, key: string[], data:
   await client.query(sql, values);
 };
 
-export async function syncEntity(pool: pg.Pool, entity: string, rows: Row[], actor?: string) {
+/** Phiên bản dữ liệu chung: tăng mỗi lần có người ghi thành công */
+export async function getRevision(pool: pg.Pool) {
+  const r = await pool.query(`SELECT so FROM phien_ban_du_lieu WHERE id = 1`).catch(() => ({ rows: [] as any[] }));
+  return Number(r.rows[0]?.so || 0);
+}
+
+// Nhật ký thao tác và báo cáo hiện trường chỉ thêm mới / gộp nhận xét: không chặn theo phiên bản
+const NO_VERSION_CHECK = new Set(['auditLogs', 'workLogs']);
+
+export type SyncResult = { conflicts: { id: string; message: string }[]; versions: Record<string, number>; revision: number };
+
+export async function syncEntity(pool: pg.Pool, entity: string, rows: Row[], actor?: string): Promise<SyncResult> {
   const client = await pool.connect();
+  const conflicts: SyncResult['conflicts'] = [];
+  const versions: Record<string, number> = {};
+  let written = 0;
   try {
     await client.query('BEGIN');
     const acc = await accountLookup(client);
     const actorId = acc.byUsername(actor) ?? 1;
 
     for (const r of rows) {
+      const rid = String(r.id);
+      // 1. Chống ghi đè: bản ghi đã bị người khác lưu sau lần mình tải về thì không ghi
+      const cur = (await client.query(`SELECT phien_ban, nguoi_sua FROM phien_ban_ban_ghi WHERE thuc_the = $1 AND ban_ghi_id = $2 FOR UPDATE`, [entity, rid])).rows[0];
+      const curV = Number(cur?.phien_ban || 0);
+      if (!NO_VERSION_CHECK.has(entity) && r._v !== undefined && r._v !== null && Number(r._v) !== curV) {
+        conflicts.push({ id: rid, message: `đã được ${cur?.nguoi_sua || 'người khác'} cập nhật trước bạn` });
+        continue;
+      }
+      // 2. Chặn trùng lịch theo dữ liệu mới nhất trong CSDL (hai người cùng phân công một nhân sự)
+      if (entity === 'assignments' && r.status === 'HIEU_LUC') {
+        const old = (await client.query(`SELECT nhan_su_id, thoi_diem_bat_dau, thoi_diem_ket_thuc, trang_thai FROM phan_cong WHERE id = $1`, [toInt(r.id)])).rows[0];
+        const sameAsBefore = old && old.trang_thai === 'HIEU_LUC' && Number(old.nhan_su_id) === toInt(r.staffId)
+          && fmtTs(old.thoi_diem_bat_dau) === toTs(r.startDate) && fmtTs(old.thoi_diem_ket_thuc) === toTs(r.endDate);
+        if (!sameAsBefore) {
+          const clash = (await client.query(`
+            SELECT ns.ho_ten, cv.ma_cong_viec, TO_CHAR(pc.thoi_diem_bat_dau, 'DD/MM/YYYY HH24:MI') AS tu, TO_CHAR(pc.thoi_diem_ket_thuc, 'DD/MM/YYYY HH24:MI') AS den
+            FROM phan_cong pc JOIN nhan_su ns ON ns.id = pc.nhan_su_id LEFT JOIN cong_viec cv ON cv.id = pc.cong_viec_id
+            WHERE pc.nhan_su_id = $1 AND pc.id <> $2 AND pc.trang_thai = 'HIEU_LUC'
+              AND pc.thoi_diem_bat_dau < $4::timestamp AND $3::timestamp < pc.thoi_diem_ket_thuc LIMIT 1`,
+            [toInt(r.staffId), toInt(r.id), toTs(r.startDate), toTs(r.endDate)])).rows[0];
+          if (clash) {
+            conflicts.push({ id: rid, message: `trùng lịch: ${clash.ho_ten} đã được phân công ${clash.ma_cong_viec || ''} từ ${clash.tu} đến ${clash.den}` });
+            continue;
+          }
+          const leave = (await client.query(`
+            SELECT ns.ho_ten, TO_CHAR(l.thoi_diem_bat_dau, 'DD/MM/YYYY') AS tu, TO_CHAR(l.thoi_diem_ket_thuc, 'DD/MM/YYYY') AS den
+            FROM lich_nghi_ban l JOIN nhan_su ns ON ns.id = l.nhan_su_id
+            WHERE l.nhan_su_id = $1 AND l.trang_thai = 'HIEU_LUC' AND l.thoi_diem_bat_dau < $3::timestamp AND $2::timestamp < l.thoi_diem_ket_thuc LIMIT 1`,
+            [toInt(r.staffId), toTs(r.startDate), toTs(r.endDate)])).rows[0];
+          if (leave) {
+            conflicts.push({ id: rid, message: `trùng lịch nghỉ/bận của ${leave.ho_ten} (${leave.tu} – ${leave.den})` });
+            continue;
+          }
+        }
+      }
+      written++;
       switch (entity) {
         case 'customers':
           await upsert(client, 'khach_hang', ['id'], {
@@ -647,8 +712,18 @@ export async function syncEntity(pool: pg.Pool, entity: string, rows: Row[], act
         default:
           throw new Error(`Không hỗ trợ đồng bộ đối tượng ${entity}`);
       }
+      // Tăng phiên bản bản ghi vừa ghi
+      const nv = curV + 1;
+      await client.query(`INSERT INTO phien_ban_ban_ghi (thuc_the, ban_ghi_id, phien_ban, nguoi_sua, thoi_diem) VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP)
+        ON CONFLICT (thuc_the, ban_ghi_id) DO UPDATE SET phien_ban = EXCLUDED.phien_ban, nguoi_sua = EXCLUDED.nguoi_sua, thoi_diem = EXCLUDED.thoi_diem`,
+        [entity, rid, nv, acc.nameOf(actor) || actor || null]);
+      versions[rid] = nv;
     }
+    let revision = 0;
+    if (written > 0) revision = Number((await client.query(`UPDATE phien_ban_du_lieu SET so = so + 1, thoi_diem = CURRENT_TIMESTAMP WHERE id = 1 RETURNING so`)).rows[0]?.so || 0);
     await client.query('COMMIT');
+    if (!revision) revision = await getRevision(pool);
+    return { conflicts, versions, revision };
   } catch (err) {
     await client.query('ROLLBACK');
     throw err;
@@ -656,6 +731,14 @@ export async function syncEntity(pool: pg.Pool, entity: string, rows: Row[], act
     client.release();
   }
 }
+
+/** Định dạng TIMESTAMP đọc từ CSDL thành "YYYY-MM-DD HH:MM:SS" để so sánh */
+const fmtTs = (d: any) => {
+  if (!d) return null;
+  if (typeof d === 'string') return d.replace('T', ' ').slice(0, 19);
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+};
 
 export async function setPassword(pool: pg.Pool, accountId: string, password: string) {
   await pool.query(`UPDATE tai_khoan SET mat_khau_bam = $1, thoi_diem_cap_nhat = NOW() WHERE id = $2`, [hashPassword(password), toInt(accountId)]);

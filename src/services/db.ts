@@ -77,6 +77,7 @@ function saveToStorage<T>(key: string, data: T): void {
 }
 
 export interface DatabaseStatus {
+  unreachable?: boolean; // không gọi được máy chủ (mất mạng, máy chủ đang khởi động)
   connected: boolean;
   hasDatabaseUrl: boolean;
   databaseName?: string;
@@ -100,6 +101,7 @@ export const dbService = {
       return {
         connected: false,
         hasDatabaseUrl: false,
+        unreachable: true,
         mode: 'Client Storage Mode',
         message: 'Không thể kết nối đến máy chủ backend.'
       };
@@ -107,6 +109,7 @@ export const dbService = {
       return {
         connected: false,
         hasDatabaseUrl: false,
+        unreachable: true,
         mode: 'Client Storage Mode',
         message: 'Đang chạy ở chế độ Client Storage.'
       };
@@ -306,6 +309,18 @@ export const dbService = {
     }
   },
 
+  /** Phiên bản dữ liệu chung trên máy chủ (null khi không kết nối được) */
+  getRevision: async (): Promise<number | null> => {
+    try {
+      const res = await fetch('/api/revision', { cache: 'no-store' });
+      if (!res.ok) return null;
+      const data = await res.json();
+      return typeof data.revision === 'number' ? data.revision : null;
+    } catch {
+      return null;
+    }
+  },
+
   /** Lưu tệp thật vào CSDL; trả về đường dẫn /api/files/{id} (null khi chưa kết nối CSDL) */
   uploadFile: async (file: Blob, name: string): Promise<string | null> => {
     try {
@@ -323,7 +338,7 @@ export const dbService = {
   },
 
   /** Ghi các bản ghi vừa thay đổi vào PostgreSQL */
-  syncEntity: async (entity: string, rows: any[], actor?: string): Promise<{ success: boolean; error?: string }> => {
+  syncEntity: async (entity: string, rows: any[], actor?: string): Promise<{ success: boolean; error?: string; conflicts?: { id: string; message: string }[]; versions?: Record<string, number>; revision?: number }> => {
     try {
       const res = await fetch(`/api/sync/${entity}`, {
         method: 'POST',
@@ -331,7 +346,7 @@ export const dbService = {
         body: JSON.stringify({ rows, actor })
       });
       const data = await res.json();
-      return res.ok ? { success: true } : { success: false, error: data.error };
+      return res.ok ? { success: true, conflicts: data.conflicts || [], versions: data.versions || {}, revision: data.revision } : { success: false, error: data.error };
     } catch (err: any) {
       return { success: false, error: err.message };
     }

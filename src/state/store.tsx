@@ -69,6 +69,13 @@ export interface ConflictItem {
   recordId: string;
 }
 
+const ENTITY_LABEL: Record<string, string> = {
+  customers: 'khách hàng', staff: 'nhân sự', accounts: 'tài khoản', projects: 'dự án', categories: 'hạng mục', tasks: 'công việc',
+  assignments: 'phân công', leaves: 'lịch nghỉ/bận', subcontractors: 'đội thi công ngoài', externalAssignments: 'phần việc giao ngoài',
+  workLogs: 'nhật ký hiện trường', docs: 'hồ sơ kỹ thuật', auditLogs: 'nhật ký thao tác', teams: 'tổ đội', skills: 'chuyên môn',
+  systemTypes: 'loại hệ thống', config: 'cấu hình'
+};
+
 const useStoreState = () => {
   // ---------- Dữ liệu nền ----------
   const [config, setConfig] = useState<SystemConfig>(() => dbService.getConfig());
@@ -149,10 +156,26 @@ const useStoreState = () => {
   const [syncError, setSyncError] = useState<string | null>(null);
   const snapshots = useRef<Record<string, Map<string, string>>>({});
   const pendingPasswords = useRef<Record<string, string>>({});
+  // Đồng bộ nhiều người dùng: phiên bản từng bản ghi, phiên bản dữ liệu chung, số lần lưu đang chờ
+  const versionsRef = useRef<Record<string, Record<string, number>>>({});
+  const revisionRef = useRef(0);
+  const ownRevisions = useRef<Set<number>>(new Set());
+  const inflight = useRef(0);
+  const failedEntities = useRef<Set<string>>(new Set());
+  const [saving, setSaving] = useState(0);
+  const [offline, setOffline] = useState(false);
+  const [syncNotice, setSyncNotice] = useState<string | null>(null);
+  const [lastSavedAt, setLastSavedAt] = useState<string | null>(null);
+  const [retryTick, setRetryTick] = useState(0);
+  const [reloadRequest, setReloadRequest] = useState(0);
 
   /** Thay dữ liệu cục bộ bằng dữ liệu đọc từ PostgreSQL (GET /api/bootstrap) */
   const loadFromDatabase = (data: Record<string, any>) => {
     snapshots.current = {};
+    versionsRef.current = data.versions || {};
+    revisionRef.current = Number(data.revision || 0);
+    ownRevisions.current = new Set();
+    failedEntities.current = new Set();
     if (data.projects) setProjects(data.projects.map(normalizeProject));
     if (data.tasks) setTasks(data.tasks.map(normalizeTask));
     if (data.staff) setStaff(data.staff);
@@ -188,19 +211,37 @@ const useStoreState = () => {
       const changed = rows.filter(r => snap.get(r.id) !== JSON.stringify(r));
       if (changed.length === 0) return;
       changed.forEach(r => snap.set(r.id, JSON.stringify(r)));
-      const payload = entity === 'accounts'
-        ? changed.map(r => (pendingPasswords.current[r.id] ? { ...r, _password: pendingPasswords.current[r.id] } : r))
-        : changed;
+      // Gửi kèm phiên bản bản ghi lúc tải về để máy chủ phát hiện người khác đã sửa trước
+      const ver = versionsRef.current[entity] || {};
+      const payload = changed.map(r => ({
+        ...r, _v: ver[r.id] ?? 0,
+        ...(entity === 'accounts' && pendingPasswords.current[r.id] ? { _password: pendingPasswords.current[r.id] } : {})
+      }));
+      inflight.current++; setSaving(n => n + 1);
       dbService.syncEntity(entity, payload, currentUser.username).then(res => {
+        inflight.current--; setSaving(n => Math.max(0, n - 1));
         if (!res.success) {
-          setSyncError(`Không lưu được vào CSDL (${entity}): ${res.error || 'lỗi kết nối'}`);
+          // Lỗi kết nối / máy chủ: giữ thay đổi trên máy, tự gửi lại sau
           changed.forEach(r => snap.delete(r.id));
+          failedEntities.current.add(entity);
+          const what = [...failedEntities.current].map(e => ENTITY_LABEL[e] || e).join(', ');
+          const why = /fetch|network|Failed/i.test(res.error || '') ? 'mất kết nối tới máy chủ' : (res.error || 'mất kết nối tới máy chủ');
+          setSyncError(`Chưa lưu được thay đổi (${what}) vì ${why}. Thay đổi vẫn còn trên máy này và sẽ tự gửi lại; đừng đóng trang.`);
           return;
         }
-        setSyncError(null);
+        failedEntities.current.delete(entity);
+        if (failedEntities.current.size === 0) setSyncError(null);
         if (entity === 'accounts') changed.forEach(r => { delete pendingPasswords.current[r.id]; });
+        versionsRef.current[entity] = { ...(versionsRef.current[entity] || {}), ...(res.versions || {}) };
+        if (res.revision) ownRevisions.current.add(res.revision);
+        setLastSavedAt(nowDb());
+        if (res.conflicts && res.conflicts.length > 0) {
+          // Người khác đã lưu trước: không ghi đè, tải lại bản mới nhất
+          setSyncNotice(`Không lưu ${res.conflicts.length} thay đổi về ${ENTITY_LABEL[entity] || entity} vì ${res.conflicts.map(c => c.message).slice(0, 3).join('; ')}. Hệ thống đã tải lại dữ liệu mới nhất, vui lòng kiểm tra và thực hiện lại nếu cần.`);
+          setReloadRequest(n => n + 1);
+        }
       });
-    }, [rows, dbMode]);
+    }, [rows, dbMode, retryTick]);
   };
 
   useDbSync('customers', customers);
@@ -221,6 +262,63 @@ const useStoreState = () => {
   useDbSync('systemTypes', systemTypes);
   const configRows = useMemo(() => [{ ...config, id: 'config' }], [config]);
   useDbSync('config', configRows);
+
+  // ---------- Theo dõi thay đổi của người khác và tự gửi lại khi lỗi ----------
+  const reloadFromServer = async () => {
+    if (inflight.current > 0) return false;
+    const data = await dbService.bootstrap();
+    if (!data) { setOffline(true); return false; }
+    setOffline(false);
+    loadFromDatabase(data);
+    return true;
+  };
+
+  // Có yêu cầu tải lại (sau xung đột) thì tải ngay khi không còn lần lưu nào đang chạy
+  useEffect(() => {
+    if (!reloadRequest || !dbMode) return;
+    const t = window.setInterval(() => { if (inflight.current === 0) { window.clearInterval(t); reloadFromServer(); } }, 300);
+    return () => window.clearInterval(t);
+  }, [reloadRequest]);
+
+  // Mỗi 15 giây (và khi quay lại cửa sổ) hỏi máy chủ có dữ liệu mới do người khác lưu không
+  useEffect(() => {
+    if (!dbMode) return;
+    const check = async () => {
+      const rev = await dbService.getRevision();
+      if (rev === null) { setOffline(true); return; }
+      setOffline(false);
+      if (failedEntities.current.size > 0) { setRetryTick(n => n + 1); return; }
+      if (rev <= revisionRef.current || inflight.current > 0) return;
+      // Bỏ qua các phiên bản do chính máy này vừa ghi
+      let r = revisionRef.current;
+      while (r < rev && ownRevisions.current.has(r + 1)) r++;
+      if (r >= rev) { revisionRef.current = rev; return; }
+      reloadFromServer();
+    };
+    const id = window.setInterval(check, 15000);
+    const onVisible = () => { if (document.visibilityState === 'visible') check(); };
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('online', check);
+    return () => { window.clearInterval(id); document.removeEventListener('visibilitychange', onVisible); window.removeEventListener('online', check); };
+  }, [dbMode]);
+
+  // Lỗi lưu: tự thử lại mỗi 10 giây
+  useEffect(() => {
+    if (!syncError) return;
+    const id = window.setInterval(() => { if (failedEntities.current.size > 0 && inflight.current === 0) setRetryTick(n => n + 1); }, 10000);
+    return () => window.clearInterval(id);
+  }, [syncError]);
+
+  // Còn thay đổi chưa lưu thì cảnh báo trước khi đóng/tải lại trang
+  useEffect(() => {
+    const h = (e: BeforeUnloadEvent) => {
+      if (inflight.current > 0 || failedEntities.current.size > 0) { e.preventDefault(); e.returnValue = ''; }
+    };
+    window.addEventListener('beforeunload', h);
+    return () => window.removeEventListener('beforeunload', h);
+  }, []);
+
+  const retrySync = () => setRetryTick(n => n + 1);
 
   const actor = () => currentUser.username || currentUser.name;
   const actorName = () => currentUser.name;
@@ -1140,7 +1238,7 @@ const useStoreState = () => {
     subcontractors, externalAssignments, auditLogs, currentUser, role,
     visibleProjects, visibleProjectIds, scoped,
     // tiện ích
-    dbMode, syncError, setCurrentUser, loadFromDatabase, findConflicts, getAffectedAssignments, isTaskAssignedToMe, queryTime,
+    dbMode, syncError, saving, offline, syncNotice, lastSavedAt, setSyncNotice, retrySync, reloadFromServer, setCurrentUser, loadFromDatabase, findConflicts, getAffectedAssignments, isTaskAssignedToMe, queryTime,
     // nghiệp vụ
     teams, skills, systemTypes, saveTeam, saveSkill, saveSystemType, updateCustomer,
     addCustomer, createProject, updateProject, changeProjectStatus,

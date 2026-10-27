@@ -4,7 +4,7 @@ import path from 'path';
 import fs from 'fs';
 import dotenv from 'dotenv';
 import pg from 'pg';
-import { bootstrap, syncEntity, ensureSchemaExtensions, verifyPassword, setPassword, saveFile, readFile } from './server-db.ts';
+import { bootstrap, syncEntity, ensureSchemaExtensions, verifyPassword, setPassword, saveFile, readFile, getRevision } from './server-db.ts';
 
 dotenv.config();
 
@@ -211,6 +211,16 @@ app.get('/api/files/:id', async (req, res) => {
   }
 });
 
+// Phiên bản dữ liệu chung: máy khách hỏi định kỳ để biết có người khác vừa thay đổi
+app.get('/api/revision', async (req, res) => {
+  if (!pool) return res.json({ revision: 0, useClientStorage: true });
+  try {
+    return res.json({ revision: await getRevision(pool) });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/bootstrap', async (req, res) => {
   if (!pool) return res.json({ useClientStorage: true });
   try {
@@ -227,8 +237,8 @@ app.post('/api/sync/:entity', async (req, res) => {
   const { rows, actor } = req.body || {};
   if (!Array.isArray(rows)) return res.status(400).json({ error: 'Thiếu danh sách bản ghi.' });
   try {
-    await syncEntity(pool, req.params.entity, rows, actor);
-    return res.json({ success: true, count: rows.length });
+    const result = await syncEntity(pool, req.params.entity, rows, actor);
+    return res.json({ success: true, count: rows.length - result.conflicts.length, ...result });
   } catch (err: any) {
     console.error(`[API] /api/sync/${req.params.entity} error:`, err.message);
     return res.status(500).json({ success: false, error: err.message });

@@ -54,7 +54,7 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenSearch,
   onOpenMenu
 }) => {
-  const { config, setQueryTime, projects } = useStore();
+  const { config, setQueryTime, projects, dbMode, saving, syncError, offline, lastSavedAt } = useStore();
   const [timeOpen, setTimeOpen] = useState(false);
   const [qtDate, setQtDate] = useState('');
   const [qtTime, setQtTime] = useState('');
@@ -209,6 +209,17 @@ export const Header: React.FC<HeaderProps> = ({
               </div>
             )}
           </div>
+
+          {/* Trạng thái lưu dữ liệu */}
+          {dbMode && (
+            <span title={syncError || (offline ? 'Mất kết nối máy chủ' : lastSavedAt ? `Lưu lần cuối lúc ${formatDateTime(lastSavedAt)}` : 'Dữ liệu đã đồng bộ')}
+              className={`hidden sm:inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-[11px] font-semibold border ${
+                syncError ? 'bg-red-50 text-red-700 border-red-200' : offline ? 'bg-amber-50 text-amber-800 border-amber-200'
+                : saving > 0 ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-emerald-50 text-emerald-700 border-emerald-200'}`}>
+              <span className={`w-2 h-2 rounded-full ${syncError ? 'bg-red-500' : offline ? 'bg-amber-500' : saving > 0 ? 'bg-blue-500 animate-pulse' : 'bg-emerald-500'}`} />
+              {syncError ? 'Chưa lưu được' : offline ? 'Mất kết nối' : saving > 0 ? 'Đang lưu…' : 'Đã lưu'}
+            </span>
+          )}
 
           {/* Chuông cảnh báo COM-01 (Quản lý, Đội trưởng) */}
           {!isDirector && onOpenNotifications && (
