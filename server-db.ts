@@ -743,7 +743,7 @@ export async function syncEntity(pool: pg.Pool, entity: string, rows: Row[], act
               }
               const next = (await client.query(`SELECT COALESCE(MAX(id), 0) + 1 AS id FROM tep_minh_chung`)).rows[0].id;
               await client.query(`INSERT INTO tep_minh_chung (id, cap_nhat_id, ten_tep_goc, duong_dan_luu, kieu_noi_dung, dung_luong_byte, ma_bam_sha256) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-                [next, toInt(r.id), p.name, pathStored, mime, size, sha]);
+                [next, toInt(r.id), p.name, pathStored, mime, size ?? 0, sha]);
             }
           }
           for (const c of r.comments || []) {
@@ -767,7 +767,7 @@ export async function syncEntity(pool: pg.Pool, entity: string, rows: Row[], act
             let sha = str(v.sha256);
             if (!sha) sha = crypto.createHash('sha256').update(stored?.du_lieu || String(v.storedPath || v.originalFileName)).digest('hex');
             const mime = str(v.mimeType) || str(stored?.kieu_noi_dung) || mimeOf(v.originalFileName);
-            const vals = [v.label || '', v.originalFileName, v.storedPath || v.originalFileName, v.fileType, v.fileSizeByte ?? null, sha,
+            const vals = [v.label || '', v.originalFileName, v.storedPath || v.originalFileName, v.fileType, v.fileSizeByte ?? stored?.du_lieu?.length ?? 0, sha,
               str(v.changeNotes), acc.byName(v.uploadedBy) ?? actorId, toTs(v.uploadedAt), v.isSelectedForExecution ? 1 : 0, acc.byName(v.selectedBy), toTs(v.selectedAt), mime];
             if (found) {
               await client.query(`UPDATE phien_ban_ho_so SET nhan_phien_ban=$1, ten_tep_goc=$2, duong_dan_luu=$3, loai_tep=$4, dung_luong_byte=$5, ma_bam_sha256=$6,
