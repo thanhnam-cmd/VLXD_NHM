@@ -38,6 +38,9 @@ export const staffingByDay = (e: ExternalAssignment, workLogs: WorkLog[], from?:
     const note = notes.filter(w => w.submittedAt.slice(0, 10) === date).sort((a, b) => b.submittedAt.localeCompare(a.submittedAt))[0];
     const count = rec ? rec.presentCount : note?.externalTeamCount;
     let status: DayStatus = 'CHUA';
+    // Chủ nhật không nằm trong ngày làm việc theo kế hoạch: không có số liệu thì coi là nghỉ, không tính "chưa cập nhật"
+    const sunday = new Date(date + 'T00:00:00').getDay() === 0;
+    if (sunday && count === undefined) status = 'NGHI';
     // Đã xác nhận: số của Quản lý quyết định; chưa xác nhận: theo đội trưởng báo
     const confirmed = !!rec?.confirmed;
     const reportedStatus = rec?.reportedStatus || note?.externalStaffingStatus;
@@ -45,7 +48,7 @@ export const staffingByDay = (e: ExternalAssignment, workLogs: WorkLog[], from?:
     else if (!confirmed && reportedStatus) status = reportedStatus as DayStatus;
     else if (count !== undefined) status = !e.workerCount || count === e.workerCount ? 'DU' : count > e.workerCount ? 'THUA' : 'THIEU';
     return {
-      date, count, status, confirmed: count !== undefined && confirmed, pending: count !== undefined && !confirmed,
+      date, sunday, count, status, confirmed: count !== undefined && confirmed, pending: count !== undefined && !confirmed,
       content: rec?.reportNote || rec?.content || note?.externalTeamNote || '', managerNote: rec?.managerNote || '',
       by: rec?.confirmedBy || rec?.reportedBy || rec?.updatedBy || note?.submittedByStaffName || ''
     };
@@ -55,10 +58,12 @@ export const staffingByDay = (e: ExternalAssignment, workLogs: WorkLog[], from?:
 export const summarizeDays = (days: ReturnType<typeof staffingByDay>) => {
   const du = days.filter(d => d.status === 'DU' || d.status === 'THUA').length;
   const thieu = days.filter(d => d.status === 'THIEU').length;
-  const updated = days.filter(d => d.status !== 'CHUA').length;
+  // Ngày làm việc theo kế hoạch: không tính Chủ nhật (N_kh = số ngày − số Chủ nhật)
+  const workDays = days.filter(d => !d.sunday);
+  const updated = workDays.filter(d => d.status !== 'CHUA').length;
   const manDays = days.reduce((s, d) => s + (d.count || 0), 0);
   const pending = days.filter(d => d.pending).length;
-  return { du, thieu, updated, pending, total: days.length, manDays, rate: du + thieu > 0 ? Math.round((du / (du + thieu)) * 100) : null };
+  return { du, thieu, updated, pending, total: workDays.length, manDays, rate: du + thieu > 0 ? Math.round((du / (du + thieu)) * 100) : null };
 };
 
 const assessment = (rate: number | null) =>
@@ -196,7 +201,7 @@ export const ExternalTeamReport: React.FC<{ onSelectProject?: (projectId: string
                         const day = r.days.find(x => x.date === d);
                         return (
                           <td key={d} className={`${tdCls} text-center p-1`} title={day ? `${DAY_LABEL[day.status]}${day.pending ? ' · CHỜ QUẢN LÝ XÁC NHẬN' : day.confirmed ? ' · đã xác nhận' : ''}${day.content ? ' · ' + day.content : ''}${day.managerNote ? ' · QL: ' + day.managerNote : ''}${day.by ? ' · ' + day.by : ''}` : 'Ngoài thời gian làm việc'}>
-                            {day ? <span className={`inline-block min-w-[30px] px-1 py-0.5 rounded font-mono font-bold ${DAY_CLS[day.status]} ${day.pending ? 'outline-2 outline-dashed outline-amber-500' : ''}`}>{day.status === 'CHUA' ? '?' : day.count}</span> : <span className="text-slate-300">·</span>}
+                            {day ? <span className={`inline-block min-w-[30px] px-1 py-0.5 rounded font-mono font-bold ${DAY_CLS[day.status]} ${day.pending ? 'outline-2 outline-dashed outline-amber-500' : ''}`}>{day.status === 'CHUA' ? '?' : (day.count ?? 'CN')}</span> : <span className="text-slate-300">·</span>}
                           </td>
                         );
                       })}

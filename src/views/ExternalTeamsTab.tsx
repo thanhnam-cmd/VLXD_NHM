@@ -3,7 +3,7 @@ import { DateInput } from '../components/inputs.tsx';
 import type { ExternalAssignment, ExternalSubcontractor } from '../types/index.ts';
 import { useStore } from '../state/store.tsx';
 import { DEMO_QUERY_TIME } from '../utils/progressCalculator.ts';
-import { formatDate, formatDateTime, toDbDateTime, toTime, daysBetween, isTaskOpen, isTeamLeadRole, canOperate, isDirectorRole } from '../utils/domain.ts';
+import { formatDate, formatDateTime, toDbDateTime, toTime, daysBetween, workingDays, isSunday, isTaskOpen, isTeamLeadRole, canOperate, isDirectorRole } from '../utils/domain.ts';
 import { useToast, Modal, Drawer, Label, Hint, ErrorBox, inputCls, btnPrimary, btnSecondary, ConfirmDialog } from '../components/ui.tsx';
 import { Plus, Search } from 'lucide-react';
 import { SearchSelect } from '../components/inputs.tsx';
@@ -19,11 +19,15 @@ export const externalState = (e: ExternalAssignment) => {
   return { key: 'DANG', label: 'Đang triển khai', cls: 'bg-blue-100 text-blue-800' };
 };
 
-/** "Đã cập nhật x/y ngày": y tính từ ngày bắt đầu đến ngày liền trước thời điểm tra cứu, tối đa đến ngày kết thúc */
+/**
+ * "Đã cập nhật x/N_kh ngày": N_kh là số ngày làm việc theo kế hoạch từ ngày đầu đến ngày cuối được giao, trừ Chủ nhật
+ * (N_kh = (E − S + 1) − số Chủ nhật); x là số ngày làm việc (không tính Chủ nhật) đã có số người.
+ */
 export const staffingProgress = (e: ExternalAssignment) => {
-  const total = daysBetween(e.startDate, e.dueDate) + 1;
-  const y = Math.max(0, Math.min(total, daysBetween(e.startDate, DEMO_QUERY_TIME)));
-  return { x: (e.dailyStaffing || []).length, y, total };
+  const s = e.startDate.slice(0, 10), end = e.dueDate.slice(0, 10);
+  const total = workingDays(s, end);
+  const x = (e.dailyStaffing || []).filter(d => d.date >= s && d.date <= end && !isSunday(d.date)).length;
+  return { x, y: total, total };
 };
 
 const money = (v?: number) => (v ? `${v.toLocaleString('vi-VN')} đ` : '—');
@@ -250,7 +254,7 @@ export const ExternalDetailDrawer: React.FC<{ extId: string; onClose: () => void
           {isManager && ext.status === 'HIEU_LUC' && ext.taskId && <button type="button" onClick={() => setEdit(true)} className="px-2.5 py-1 rounded-lg border border-slate-300 bg-white font-semibold cursor-pointer">Sửa phần việc</button>}
         </div>
         <div>{ext.workDescription}</div>
-        <div className="text-slate-600">Thời gian làm việc: <span className="font-mono">{formatDate(ext.startDate)} – {formatDate(ext.dueDate)}</span> ({prog.total} ngày)</div>
+        <div className="text-slate-600">Thời gian làm việc: <span className="font-mono">{formatDate(ext.startDate)} – {formatDate(ext.dueDate)}</span> ({prog.total} ngày làm việc, trừ Chủ nhật)</div>
         <div className="text-slate-600">Đầu mối: {sub?.contactPerson}{sub?.contactTitle ? `, ${sub.contactTitle}` : ''} · {sub?.phone}</div>
         <div className="text-slate-600">Số người dự kiến: {ext.workerCount ?? '—'}{!isLead && <> · Giá trị khoán dự kiến: <strong>{money(ext.contractValue)}</strong></>}</div>
         <div className="text-slate-600">Nhân sự NMH phối hợp: <strong>{staff.find(s => s.id === ext.nmhCoordinatorId)?.name}</strong></div>
@@ -258,7 +262,7 @@ export const ExternalDetailDrawer: React.FC<{ extId: string; onClose: () => void
       </div>
       <div className="flex items-center justify-between">
         <span className="text-[11px] px-2 py-0.5 rounded-full bg-blue-50 text-blue-800 font-bold border border-blue-200">
-          {toTime(DEMO_QUERY_TIME) < toTime(ext.startDate) ? 'Chưa đến ngày làm việc' : `Đã cập nhật ${prog.x}/${prog.y} ngày`}
+          {`Đã cập nhật ${prog.x}/${prog.y} ngày`}{toTime(DEMO_QUERY_TIME) < toTime(ext.startDate) ? ' · chưa đến ngày làm việc' : ''}
         </span>
         <div className="flex gap-2">
           {ext.status === 'HIEU_LUC' && (isManager || isCoordinator) && !isDirectorRole(currentUser) && (
@@ -431,8 +435,8 @@ export const ExternalTeamsTab: React.FC<{ initialFilter?: string }> = ({ initial
                 <div className="font-mono text-[11px] text-slate-600">{t ? `${t.code} · ${p?.code}` : `${p?.code} · khoán theo dự án`}</div>
                 <div className="font-semibold text-slate-800">{t?.title || p?.name}</div>
                 <div className="text-slate-600">{e.workDescription}</div>
-                <div className="font-mono text-slate-500">{formatDate(e.startDate)} – {formatDate(e.dueDate)} ({prog.total} ngày)</div>
-                <div className="text-slate-500">{st.key === 'SAP' ? 'Chưa đến ngày làm việc' : `Đã cập nhật ${prog.x}/${prog.y} ngày`}</div>
+                <div className="font-mono text-slate-500">{formatDate(e.startDate)} – {formatDate(e.dueDate)} ({prog.total} ngày làm việc)</div>
+                <div className="text-slate-500">{`Đã cập nhật ${prog.x}/${prog.y} ngày`}{st.key === 'SAP' ? ' · chưa đến ngày làm việc' : ''}</div>
                 <div className="text-slate-600">Số người dự kiến: {e.workerCount ?? '—'} · Giá trị khoán dự kiến: <strong>{money(e.contractValue)}</strong></div>
                 <div className="text-slate-600">Nhân sự NMH phối hợp: {staff.find(s => s.id === e.nmhCoordinatorId)?.name}</div>
                 <div className="flex gap-2 pt-1" onClick={ev => ev.stopPropagation()}>

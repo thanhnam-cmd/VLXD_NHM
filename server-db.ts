@@ -523,6 +523,17 @@ export async function getRevision(pool: pg.Pool) {
 }
 
 // Nhật ký thao tác và báo cáo hiện trường chỉ thêm mới / gộp nhận xét: không chặn theo phiên bản
+/** Kiểu nội dung (MIME) theo đuôi tệp – dùng khi tệp không kèm kiểu */
+const mimeOf = (name?: string) => {
+  const ext = String(name || '').toLowerCase().split('.').pop() || '';
+  const m: Record<string, string> = {
+    pdf: 'application/pdf', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', bmp: 'image/bmp',
+    xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', xls: 'application/vnd.ms-excel', csv: 'text/csv',
+    docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', doc: 'application/msword',
+    zip: 'application/zip', rar: 'application/vnd.rar', '7z': 'application/x-7z-compressed', txt: 'text/plain'
+  };
+  return m[ext] || 'application/octet-stream';
+};
 const NO_VERSION_CHECK = new Set(['auditLogs', 'workLogs']);
 
 export type SyncResult = { conflicts: { id: string; message: string }[]; versions: Record<string, number>; revision: number };
@@ -750,22 +761,22 @@ export async function syncEntity(pool: pg.Pool, entity: string, rows: Row[], act
           }, { nguoi_tao_id: acc.byName(r.uploadedBy) ?? actorId });
           for (const v of r.versions || []) {
             const found = (await client.query(`SELECT id FROM phien_ban_ho_so WHERE ho_so_id = $1 AND so_phien_ban = $2`, [toInt(r.id), v.versionNum])).rows[0];
+            // Tệp tải lên lưu trong tep_du_lieu: lấy mã băm và kiểu nội dung (MIME) từ chính tệp
+            const fm = String(v.storedPath || '').match(/^\/api\/files\/(\d+)$/);
+            const stored = fm ? (await client.query(`SELECT du_lieu, kieu_noi_dung FROM tep_du_lieu WHERE id = $1`, [parseInt(fm[1], 10)])).rows[0] : null;
             let sha = str(v.sha256);
-            if (!sha) {
-              const fm = String(v.storedPath || '').match(/^\/api\/files\/(\d+)$/);
-              const bytes = fm ? (await client.query(`SELECT du_lieu FROM tep_du_lieu WHERE id = $1`, [parseInt(fm[1], 10)])).rows[0]?.du_lieu : null;
-              sha = crypto.createHash('sha256').update(bytes || String(v.storedPath || v.originalFileName)).digest('hex');
-            }
+            if (!sha) sha = crypto.createHash('sha256').update(stored?.du_lieu || String(v.storedPath || v.originalFileName)).digest('hex');
+            const mime = str(v.mimeType) || str(stored?.kieu_noi_dung) || mimeOf(v.originalFileName);
             const vals = [v.label || '', v.originalFileName, v.storedPath || v.originalFileName, v.fileType, v.fileSizeByte ?? null, sha,
-              str(v.changeNotes), acc.byName(v.uploadedBy) ?? actorId, toTs(v.uploadedAt), v.isSelectedForExecution ? 1 : 0, acc.byName(v.selectedBy), toTs(v.selectedAt)];
+              str(v.changeNotes), acc.byName(v.uploadedBy) ?? actorId, toTs(v.uploadedAt), v.isSelectedForExecution ? 1 : 0, acc.byName(v.selectedBy), toTs(v.selectedAt), mime];
             if (found) {
               await client.query(`UPDATE phien_ban_ho_so SET nhan_phien_ban=$1, ten_tep_goc=$2, duong_dan_luu=$3, loai_tep=$4, dung_luong_byte=$5, ma_bam_sha256=$6,
-                noi_dung_thay_doi=$7, nguoi_tai_len_id=$8, thoi_diem_tai_len=$9, duoc_chon=$10, nguoi_chon_id=$11, thoi_diem_chon=$12 WHERE id=$13`, [...vals, found.id]);
+                noi_dung_thay_doi=$7, nguoi_tai_len_id=$8, thoi_diem_tai_len=$9, duoc_chon=$10, nguoi_chon_id=$11, thoi_diem_chon=$12, kieu_noi_dung=$13 WHERE id=$14`, [...vals, found.id]);
             } else {
               const next = (await client.query(`SELECT COALESCE(MAX(id), 0) + 1 AS id FROM phien_ban_ho_so`)).rows[0].id;
               await client.query(`INSERT INTO phien_ban_ho_so (nhan_phien_ban, ten_tep_goc, duong_dan_luu, loai_tep, dung_luong_byte, ma_bam_sha256,
-                noi_dung_thay_doi, nguoi_tai_len_id, thoi_diem_tai_len, duoc_chon, nguoi_chon_id, thoi_diem_chon, id, ho_so_id, so_phien_ban)
-                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`, [...vals, next, toInt(r.id), v.versionNum]);
+                noi_dung_thay_doi, nguoi_tai_len_id, thoi_diem_tai_len, duoc_chon, nguoi_chon_id, thoi_diem_chon, kieu_noi_dung, id, ho_so_id, so_phien_ban)
+                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`, [...vals, next, toInt(r.id), v.versionNum]);
             }
           }
           break;

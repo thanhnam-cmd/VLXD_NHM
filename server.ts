@@ -75,6 +75,9 @@ app.get('/api/database/status', async (req, res) => {
     const tableNames = tablesCheck.rows.map(r => r.table_name);
     const hasCoreTables = tableNames.includes('du_an') && tableNames.includes('nhan_su') && tableNames.includes('cong_viec');
     const upgrades = tableNames.includes('moc_nang_cap') ? (await client.query('SELECT khoa FROM moc_nang_cap ORDER BY khoa')).rows.map(r => r.khoa) : [];
+    // Cấu trúc: các cột bắt buộc không có giá trị mặc định (để đối chiếu khi CSDL triển khai khác bản thiết kế)
+    const requiredColumns = (await client.query(`SELECT table_name || '.' || column_name AS c FROM information_schema.columns
+      WHERE table_schema = 'public' AND is_nullable = 'NO' AND column_default IS NULL ORDER BY 1`)).rows.map(r => r.c);
 
     let rowCount = 0;
     if (hasCoreTables) {
@@ -93,6 +96,7 @@ app.get('/api/database/status', async (req, res) => {
       serverTime: result.rows[0].now,
       tablesCount: tableNames.length,
       hasCoreTables,
+      requiredColumns,
       schemaError,
       upgrades,
       tableNames,

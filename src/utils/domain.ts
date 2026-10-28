@@ -162,6 +162,23 @@ export const dateToDb = (d: Date) =>
 export const nowDb = () => dateToDb(new Date());
 
 /** Số ngày lịch giữa hai mốc (theo ngày, bỏ giờ) */
+/** Ngày (yyyy-mm-dd) là Chủ nhật */
+export const isSunday = (d: string) => new Date(toDbDateTime(d).slice(0, 10) + 'T00:00:00').getDay() === 0;
+
+/**
+ * Số ngày làm việc theo kế hoạch: N_kh = (E − S + 1) − CN(S, E), CN là số Chủ nhật trong khoảng S..E.
+ * Ví dụ 19/10/2026 (Thứ Hai) – 25/10/2026: 7 ngày, trừ Chủ nhật 25/10 → 6.
+ */
+export const workingDays = (from: string, to: string) => {
+  const s = toDbDateTime(from).slice(0, 10), e = toDbDateTime(to).slice(0, 10);
+  if (!s || !e || e < s) return 0;
+  const total = daysBetween(s, e) + 1;
+  const firstDow = new Date(s + 'T00:00:00').getDay();
+  const toFirstSunday = (7 - firstDow) % 7;
+  const sundays = toFirstSunday >= total ? 0 : Math.floor((total - 1 - toFirstSunday) / 7) + 1;
+  return total - sundays;
+};
+
 export const daysBetween = (from: string, to: string) => {
   const a = new Date(toDbDateTime(from).slice(0, 10) + 'T00:00:00').getTime();
   const b = new Date(toDbDateTime(to).slice(0, 10) + 'T00:00:00').getTime();

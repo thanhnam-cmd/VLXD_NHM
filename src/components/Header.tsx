@@ -54,7 +54,7 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenSearch,
   onOpenMenu
 }) => {
-  const { config, setQueryTime, projects, dbMode, saving, syncError, offline, lastSavedAt } = useStore();
+  const { config, setQueryTime, projects, dbMode, saving, syncError, offline, lastSavedAt, auditLogs } = useStore();
   const [timeOpen, setTimeOpen] = useState(false);
   const [qtDate, setQtDate] = useState('');
   const [qtTime, setQtTime] = useState('');
@@ -66,7 +66,11 @@ export const Header: React.FC<HeaderProps> = ({
     const r = setQueryTime(value);
     if (!r.ok) return setQtErr(r.message);
     setTimeOpen(false);
+    toast.show(value ? `Đã cố định thời điểm tra cứu ${formatDateTime(value)} cho mọi tài khoản.` : 'Đã bỏ cố định: mọi tài khoản dùng giờ máy.');
   };
+  // Ai đặt mốc hiện tại (lần đổi gần nhất trong nhật ký thao tác)
+  const lastQtChange = [...(auditLogs || [])].filter(l => l.objectType === 'Cấu hình' && l.newVal && 'THOI_DIEM_TRA_CUU' in (l.newVal as Record<string, unknown>))
+    .sort((a, b) => String(b.time).localeCompare(String(a.time)))[0];
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   // Mật khẩu tạm do Quản trị viên cấp: tự mở hộp thoại đổi mật khẩu khi đăng nhập
   const [isChangePasswordOpen, setIsChangePasswordOpen] = useState(!!currentUser.mustChangePassword);
@@ -194,7 +198,7 @@ export const Header: React.FC<HeaderProps> = ({
               <span className="font-mono font-semibold hidden xl:inline">{formatDateTime(DEMO_QUERY_TIME)}</span>
               <span className="font-mono font-semibold hidden sm:inline xl:hidden">{formatDateTime(DEMO_QUERY_TIME).slice(0, 10)}</span>
               <span className="font-mono font-semibold sm:hidden">{formatDateTime(DEMO_QUERY_TIME).slice(0, 5)}</span>
-              {config.evaluationTimestamp && <span className="font-semibold hidden 2xl:inline">· cố định</span>}
+              {config.evaluationTimestamp && <span className="font-semibold hidden lg:inline-flex items-center gap-0.5"><Lock className="w-3 h-3" />Cố định</span>}
             </button>
             {timeOpen && (
               <div className="absolute -right-24 sm:right-0 top-9 z-50 w-72 max-w-[calc(100vw-24px)] bg-white border border-slate-200 rounded-xl shadow-2xl p-3 space-y-2 text-xs">
@@ -204,9 +208,13 @@ export const Header: React.FC<HeaderProps> = ({
                   <DateInput value={qtDate} onChange={e => setQtDate(e.target.value)} className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg" />
                   <input type="time" value={qtTime} onChange={e => setQtTime(e.target.value)} className="w-24 px-2 py-1.5 bg-slate-50 border border-slate-300 rounded-lg font-mono" />
                 </div>
+                <div className={`text-[11px] px-2 py-1.5 rounded-lg ${config.evaluationTimestamp ? 'bg-amber-50 text-amber-900' : 'bg-slate-50 text-slate-600'}`}>
+                  {config.evaluationTimestamp ? <>Đang <strong>cố định</strong> {formatDateTime(config.evaluationTimestamp)}</> : <>Đang dùng <strong>giờ máy</strong></>}
+                  {lastQtChange && <> · do {lastQtChange.user} đặt lúc {formatDateTime(lastQtChange.time)}</>}
+                </div>
                 {qtErr && <div className="text-red-600">{qtErr}</div>}
                 <div className="flex gap-1.5 justify-end">
-                  <button type="button" onClick={() => applyTime('')} className="px-2.5 py-1.5 rounded-lg border border-slate-300 font-semibold hover:bg-slate-50 cursor-pointer">Dùng giờ máy</button>
+                  <button type="button" disabled={!config.evaluationTimestamp} onClick={() => applyTime('')} title="Bỏ mốc cố định cho mọi tài khoản" className="px-2.5 py-1.5 rounded-lg border border-slate-300 font-semibold hover:bg-slate-50 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed">Bỏ cố định</button>
                   <button type="button" onClick={() => qtDate ? applyTime(`${qtDate} ${qtTime || '08:00'}:00`) : setQtErr('Vui lòng chọn ngày.')} className="px-2.5 py-1.5 rounded-lg bg-[#152A55] text-white font-semibold cursor-pointer">Cố định mốc này</button>
                 </div>
               </div>
