@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { DateInput } from '../components/inputs.tsx';
+import { DateInput, parseVnDateTime } from '../components/inputs.tsx';
 import { Field, ctlCls } from '../components/reportKit.tsx';
 import { UserAccount, UserRole, SystemConfig, AuditLog } from '../types/index.ts';
 import { useStore } from '../state/store.tsx';
@@ -321,18 +321,17 @@ export const AdminView: React.FC<AdminViewProps> = ({ initialTab = 'accounts' })
     types: config.allowedFileTypes.split(',').filter(Boolean),
     backup: String(config.backupRetentionCount ?? 7)
   }));
+  // Mốc tra cứu có thể được Quản lý, Đội trưởng đổi ở thanh trên: cập nhật lại ô hiển thị
+  useEffect(() => { setDraft(d => ({ ...d, queryTime: toDisplay(config.evaluationTimestamp) })); }, [config.evaluationTimestamp]);
   const [cfgErr, setCfgErr] = useState<string | null>(null);
   const [confirmQueryChange, setConfirmQueryChange] = useState<SystemConfig | null>(null);
-  const parseDisplay = (s: string) => {
-    const m = s.trim().match(/^(\d{2})\/(\d{2})\/(\d{4}) (\d{2}):(\d{2})$/);
-    if (!m) return null;
-    return `${m[3]}-${m[2]}-${m[1]} ${m[4]}:${m[5]}:00`;
-  };
+  // Chấp nhận chỉ nhập ngày (giờ mặc định 08:00) hoặc ngày + giờ
+  const parseDisplay = (s: string) => parseVnDateTime(s, '08:00');
   const buildConfig = (): SystemConfig | string => {
     let qt = '';
     if (draft.queryTime.trim()) {
       const p = parseDisplay(draft.queryTime);
-      if (!p || isNaN(new Date(p.replace(' ', 'T')).getTime())) return 'Thời điểm tra cứu không hợp lệ.';
+      if (!p) return 'Thời điểm tra cứu không hợp lệ. Nhập dd/mm/yyyy (vd 25/11/2026) hoặc dd/mm/yyyy HH:mm (vd 25/11/2026 09:00).';
       qt = p;
     }
     const intIn = (v: string, min: number, max: number) => /^\d+$/.test(v) && +v >= min && +v <= max;
@@ -601,7 +600,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ initialTab = 'accounts' })
             </thead>
             <tbody className="divide-y divide-slate-100">
               {([
-                ['Thời điểm tra cứu', 'THOI_DIEM_TRA_CUU', <input value={draft.queryTime} onChange={e => setDraft({ ...draft, queryTime: e.target.value })} placeholder="dd/mm/yyyy HH:mm" className={`${inputCls} font-mono`} />, 'Ngày giờ dd/mm/yyyy HH:mm hoặc để trống (dùng giờ máy chủ)'],
+                ['Thời điểm tra cứu', 'THOI_DIEM_TRA_CUU', <input value={draft.queryTime} onChange={e => setDraft({ ...draft, queryTime: e.target.value })} placeholder="dd/mm/yyyy hoặc dd/mm/yyyy HH:mm" className={`${inputCls} font-mono`} />, 'Nhập ngày dd/mm/yyyy (giờ mặc định 08:00) hoặc kèm giờ HH:mm; để trống là dùng giờ máy'],
                 ['Số ngày tính là sắp đến hạn', 'SO_NGAY_SAP_DEN_HAN', <input type="number" value={draft.upcoming} onChange={e => setDraft({ ...draft, upcoming: e.target.value })} className={`${inputCls} font-mono`} />, 'Số nguyên 1 đến 30'],
                 ['Thời gian hết phiên (phút)', 'THOI_GIAN_HET_PHIEN_PHUT', <input type="number" value={draft.session} onChange={e => setDraft({ ...draft, session: e.target.value })} className={`${inputCls} font-mono`} />, 'Số nguyên 5 đến 240'],
                 ['Dung lượng tối đa mỗi tệp (MB)', 'DUNG_LUONG_TAI_LEN_TOI_DA_MB', <input type="number" value={draft.maxMb} onChange={e => setDraft({ ...draft, maxMb: e.target.value })} className={`${inputCls} font-mono`} />, 'Số nguyên 1 đến 500'],

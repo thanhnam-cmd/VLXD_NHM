@@ -22,6 +22,39 @@ const vnToIso = (vn: string) => {
   return `${y}-${pad(mo)}-${pad(d)}`;
 };
 
+/**
+ * Chuẩn hóa chuỗi đang gõ thành dd/mm/yyyy: gõ toàn số thì tự chèn cả hai dấu "/";
+ * gõ "/" thủ công (vd "1/" hoặc "12/3/") vẫn đúng; ngày, tháng tối đa 2 số, năm 4 số.
+ * Dấu "/" chỉ thêm khi gõ số tiếp theo nên xóa lùi không bị chèn lại.
+ */
+export const formatDateTyping = (raw: string) => {
+  const seg = ['', '', ''];
+  let i = 0;
+  for (const ch of raw.replace(/[^\d/]/g, '')) {
+    if (ch === '/') { if (seg[i] && i < 2) i++; continue; }
+    if (i < 2 && seg[i].length === 2) i++;
+    if (seg[i].length < (i === 2 ? 4 : 2)) seg[i] += ch;
+  }
+  // Giữ dấu "/" người dùng vừa gõ ở cuối (vd "12/")
+  const trailing = /\/$/.test(raw) && i < 2 && seg[i] ? '/' : '';
+  return seg.slice(0, i + 1).join('/') + trailing;
+};
+
+/**
+ * Đọc ngày giờ người dùng gõ: "25/11/2026", "25/11/2026 9:30", "25112026", "25112026 0930".
+ * Trả về 'yyyy-mm-dd HH:mm:00' (giờ mặc định theo defaultTime) hoặc null nếu sai.
+ */
+export const parseVnDateTime = (s: string, defaultTime = '08:00') => {
+  const m = s.trim().match(/^(\d{1,2})\/?(\d{1,2})\/?(\d{4})(?:\s+(\d{1,2})[:h]?(\d{2}))?$/);
+  if (!m) return null;
+  const iso = vnToIso(`${m[1]}/${m[2]}/${m[3]}`);
+  if (!iso) return null;
+  const hh = m[4] !== undefined ? +m[4] : +defaultTime.slice(0, 2);
+  const mm = m[5] !== undefined ? +m[5] : +defaultTime.slice(3, 5);
+  if (hh > 23 || mm > 59) return null;
+  return `${iso} ${pad(hh)}:${pad(mm)}:00`;
+};
+
 type DateInputProps = {
   value: string; // yyyy-mm-dd hoặc ''
   onChange: (e: { target: { value: string } }) => void;
@@ -52,11 +85,8 @@ export const DateInput: React.FC<DateInputProps> = ({ value, onChange, className
     if (iso !== value) onChange({ target: { value: iso } });
   };
   const onType = (raw: string) => {
-    // Tự chèn dấu "/" khi gõ số liền
-    let v = raw.replace(/[^\d/]/g, '');
-    const digits = v.replace(/\//g, '');
-    if (!v.includes('/') && digits.length > 2) v = digits.slice(0, 2) + '/' + digits.slice(2, 4) + (digits.length > 4 ? '/' + digits.slice(4, 8) : '');
-    setText(v.slice(0, 10));
+    const v = formatDateTyping(raw);
+    setText(v);
     if (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(v)) commit(v);
   };
   const openPicker = () => {

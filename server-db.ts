@@ -212,6 +212,67 @@ export async function ensureSchemaExtensions(pool: pg.Pool) {
       AND NOT EXISTS (SELECT 1 FROM phan_cong_ben_ngoai e LEFT JOIN cong_viec cv ON e.cong_viec_id = cv.id
         WHERE COALESCE(e.du_an_id, cv.du_an_id) = l.du_an_id AND e.doi_ben_ngoai_id = l.doi_ben_ngoai_id AND e.trang_thai = 'HIEU_LUC');
   `);
+  // Dữ liệu sửa bằng nâng cấp: tăng phiên bản bản ghi để máy đang mở bản cũ không ghi đè lại, và báo các máy tải lại
+  const bumpVersions = async (client: pg.PoolClient, entity: string, ids: (string | number)[]) => {
+    for (const id of ids) {
+      await client.query(`INSERT INTO phien_ban_ban_ghi (thuc_the, ban_ghi_id, phien_ban, nguoi_sua, thoi_diem) VALUES ($1, $2, 1, 'Hệ thống (nâng cấp dữ liệu)', CURRENT_TIMESTAMP)
+        ON CONFLICT (thuc_the, ban_ghi_id) DO UPDATE SET phien_ban = phien_ban_ban_ghi.phien_ban + 1, nguoi_sua = EXCLUDED.nguoi_sua, thoi_diem = EXCLUDED.thoi_diem`, [entity, String(id)]);
+    }
+    if (ids.length) await client.query(`UPDATE phien_ban_du_lieu SET so = so + 1, thoi_diem = CURRENT_TIMESTAMP WHERE id = 1`);
+  };
+  // Một đội chỉ có một phần việc còn hiệu lực trong một công việc: gộp các phần việc trùng (giữ phần có nhiều ngày nhân sự nhất),
+  // chuyển ngày nhân sự và nhật ký sang phần giữ lại; phần việc theo công việc dùng đúng thời gian của công việc
+  await once('GOP_DOI_NGOAI_TRUNG', async () => {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const groups = (await client.query(`
+        SELECT array_agg(e.id ORDER BY (SELECT COUNT(*) FROM nhan_su_ngoai_theo_ngay n WHERE n.phan_cong_ben_ngoai_id = e.id) DESC, e.id DESC) AS ids
+        FROM phan_cong_ben_ngoai e WHERE e.cong_viec_id IS NOT NULL AND e.trang_thai = 'HIEU_LUC'
+        GROUP BY e.cong_viec_id, e.doi_ben_ngoai_id HAVING COUNT(*) > 1`)).rows;
+      const touchedExt: number[] = [];
+      const touchedLogs: number[] = [];
+      for (const g of groups) {
+        const [keep, ...rest] = g.ids as number[];
+        touchedExt.push(keep);
+        for (const id of rest) {
+          await client.query(`UPDATE nhan_su_ngoai_theo_ngay n SET phan_cong_ben_ngoai_id = $1 WHERE n.phan_cong_ben_ngoai_id = $2
+            AND NOT EXISTS (SELECT 1 FROM nhan_su_ngoai_theo_ngay k WHERE k.phan_cong_ben_ngoai_id = $1 AND k.ngay = n.ngay)`, [keep, id]);
+          const oldKey = `"assignmentId":"${id}"`, newKey = `"assignmentId":"${keep}"`;
+          const logs = await client.query(`UPDATE cap_nhat_ket_qua SET
+              phan_cong_ben_ngoai_id = CASE WHEN phan_cong_ben_ngoai_id = $2 THEN $1 ELSE phan_cong_ben_ngoai_id END,
+              bao_cao_doi_ngoai = REPLACE(bao_cao_doi_ngoai, $3::text, $4::text)
+            WHERE phan_cong_ben_ngoai_id = $2 OR POSITION($3::text IN COALESCE(bao_cao_doi_ngoai, '')) > 0 RETURNING id`, [keep, id, oldKey, newKey]);
+          logs.rows.forEach(r => touchedLogs.push(r.id));
+          await client.query(`UPDATE phan_cong_ben_ngoai SET trang_thai = 'HUY', ly_do_huy = 'Gộp phần việc trùng (cùng đội, cùng công việc)',
+            thoi_diem_huy = CURRENT_TIMESTAMP, thoi_diem_cap_nhat = CURRENT_TIMESTAMP WHERE id = $1`, [id]);
+          touchedExt.push(id);
+        }
+      }
+      const aligned = await client.query(`UPDATE phan_cong_ben_ngoai e SET bat_dau_du_kien = cv.bat_dau_du_kien, ket_thuc_du_kien = cv.ket_thuc_du_kien,
+          thoi_diem_cap_nhat = CURRENT_TIMESTAMP
+        FROM cong_viec cv WHERE e.cong_viec_id = cv.id AND e.trang_thai = 'HIEU_LUC'
+          AND (e.bat_dau_du_kien IS DISTINCT FROM cv.bat_dau_du_kien OR e.ket_thuc_du_kien IS DISTINCT FROM cv.ket_thuc_du_kien) RETURNING e.id`);
+      aligned.rows.forEach(r => { if (!touchedExt.includes(r.id)) touchedExt.push(r.id); });
+      await bumpVersions(client, 'externalAssignments', touchedExt);
+      await bumpVersions(client, 'workLogs', touchedLogs);
+      await client.query('COMMIT');
+    } catch (e) { await client.query('ROLLBACK'); throw e; } finally { client.release(); }
+  });
+  // Quản lý được chọn làm phụ trách dự án phải có dự án đó trong Phạm vi dự án
+  await once('PHAM_VI_QL_PHU_TRACH', async () => {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const added = await client.query(`
+        INSERT INTO pham_vi_du_an (tai_khoan_id, du_an_id, nguoi_cap_id, thoi_diem_cap)
+        SELECT tk.id, d.id, (SELECT MIN(a.id) FROM tai_khoan a JOIN vai_tro v ON a.vai_tro_id = v.id WHERE v.ma = 'QUAN_TRI'), CURRENT_TIMESTAMP
+        FROM du_an d JOIN tai_khoan tk ON tk.nhan_su_id = d.nhan_su_phu_trach_id JOIN vai_tro vt ON tk.vai_tro_id = vt.id
+        WHERE vt.ma = 'QUAN_LY' ON CONFLICT (tai_khoan_id, du_an_id) DO NOTHING RETURNING tai_khoan_id`);
+      await bumpVersions(client, 'accounts', Array.from(new Set(added.rows.map(r => r.tai_khoan_id))));
+      await client.query('COMMIT');
+    } catch (e) { await client.query('ROLLBACK'); throw e; } finally { client.release(); }
+  });
   // Đồng bộ tên khóa cấu hình theo MH-20
   await pool.query(`
     UPDATE cau_hinh SET khoa_cau_hinh = 'SO_NGAY_SAP_DEN_HAN'

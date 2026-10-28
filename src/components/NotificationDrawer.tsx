@@ -1,7 +1,8 @@
 import React from 'react';
 import { Project, Task, Assignment, StaffLeave } from '../types/index.ts';
 import { isTaskOverdue, isTaskUpcoming7Days, DEMO_QUERY_TIME } from '../utils/progressCalculator.ts';
-import { X, Bell, AlertTriangle, Clock, CalendarX2, ChevronRight, CheckCircle2 } from 'lucide-react';
+import { X, Bell, AlertTriangle, Clock, CalendarX2, ChevronRight, CheckCircle2, Building2 } from 'lucide-react';
+import { formatDate } from '../utils/domain.ts';
 
 interface NotificationDrawerProps {
   isOpen: boolean;
@@ -12,6 +13,9 @@ interface NotificationDrawerProps {
   leaves: StaffLeave[];
   onSelectTask: (taskId: string, projectId: string) => void;
   onSelectAffectedAssignments: () => void;
+  /** Nhân sự đội khoán ngoài đội trưởng đã báo, chờ Quản lý xác nhận */
+  pendingExternal?: { key: string; team: string; date: string; count: number; workerCount?: number }[];
+  onOpenPendingExternal?: () => void;
 }
 
 export const NotificationDrawer: React.FC<NotificationDrawerProps> = ({
@@ -22,7 +26,9 @@ export const NotificationDrawer: React.FC<NotificationDrawerProps> = ({
   assignments,
   leaves,
   onSelectTask,
-  onSelectAffectedAssignments
+  onSelectAffectedAssignments,
+  pendingExternal = [],
+  onOpenPendingExternal
 }) => {
   if (!isOpen) return null;
 
@@ -47,7 +53,7 @@ export const NotificationDrawer: React.FC<NotificationDrawerProps> = ({
     });
   });
 
-  const totalCount = overdueTasks.length + upcomingTasks.length + affectedAssignments.length;
+  const totalCount = overdueTasks.length + upcomingTasks.length + affectedAssignments.length + pendingExternal.length;
 
   return (
     <div className="fixed inset-0 z-50 overflow-hidden bg-slate-900/40 backdrop-blur-xs flex justify-end animate-in fade-in duration-150">
@@ -89,6 +95,29 @@ export const NotificationDrawer: React.FC<NotificationDrawerProps> = ({
             </div>
           ) : (
             <>
+              {/* Nhóm 0: Nhân sự đội khoán ngoài chờ xác nhận */}
+              {pendingExternal.length > 0 && (
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between pb-1 border-b border-purple-100">
+                    <span className="font-bold text-purple-800 flex items-center gap-1.5">
+                      <Building2 className="w-3.5 h-3.5" />
+                      Nhân sự đội ngoài chờ xác nhận
+                    </span>
+                    <span className="px-2 py-0.5 rounded-full bg-purple-100 text-purple-800 font-bold text-[10px]">{pendingExternal.length}</span>
+                  </div>
+                  {pendingExternal.slice(0, 6).map(p => (
+                    <div key={p.key} onClick={() => { onOpenPendingExternal?.(); onClose(); }}
+                      className="p-2.5 rounded-lg border border-purple-200 bg-purple-50/60 hover:bg-purple-50 cursor-pointer flex items-center justify-between gap-2">
+                      <span className="min-w-0"><span className="font-bold text-slate-900">{p.team}</span> <span className="text-slate-500">· ngày {formatDate(p.date)}</span></span>
+                      <span className="font-mono font-bold text-purple-800 shrink-0">{p.count}/{p.workerCount ?? '—'} người</span>
+                    </div>
+                  ))}
+                  <button type="button" onClick={() => { onOpenPendingExternal?.(); onClose(); }} className="text-purple-800 font-semibold flex items-center gap-0.5 cursor-pointer">
+                    Mở danh sách để xác nhận <ChevronRight className="w-3 h-3" />
+                  </button>
+                </div>
+              )}
+
               {/* Nhóm 1: Quá hạn */}
               {overdueTasks.length > 0 && (
                 <div className="space-y-2">

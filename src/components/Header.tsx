@@ -23,7 +23,7 @@ import {
 import { DatabaseStatus, dbService } from '../services/db.ts';
 import { DEMO_QUERY_TIME } from '../utils/progressCalculator.ts';
 import { useStore } from '../state/store.tsx';
-import { formatDateTime, isAdminRole } from '../utils/domain.ts';
+import { formatDateTime, isDirectorRole } from '../utils/domain.ts';
 import { DateInput } from './inputs.tsx';
 import { ChangePasswordModal } from './ChangePasswordModal.tsx';
 import { useToast } from './ui.tsx';
@@ -59,7 +59,8 @@ export const Header: React.FC<HeaderProps> = ({
   const [qtDate, setQtDate] = useState('');
   const [qtTime, setQtTime] = useState('');
   const [qtErr, setQtErr] = useState<string | null>(null);
-  const canSetTime = isAdminRole(currentUser);
+  // Quản trị viên, Quản lý, Đội trưởng đều đổi được (dùng chung một mốc cho toàn hệ thống)
+  const canSetTime = !isDirectorRole(currentUser);
   const openTime = () => { setQtDate(DEMO_QUERY_TIME.slice(0, 10)); setQtTime(DEMO_QUERY_TIME.slice(11, 16)); setQtErr(null); setTimeOpen(true); };
   const applyTime = (value: string) => {
     const r = setQueryTime(value);
@@ -159,11 +160,11 @@ export const Header: React.FC<HeaderProps> = ({
               onClick={onOpenSearch}
               className="w-full flex items-center justify-between px-3.5 py-1.5 rounded-xl bg-slate-100/80 hover:bg-slate-200/70 border border-slate-200 text-slate-500 text-xs transition-colors cursor-pointer"
             >
-              <span className="flex items-center gap-2">
-                <Search className="w-3.5 h-3.5 text-slate-400" />
-                <span>Tìm nhanh dự án, công việc, nhân sự...</span>
+              <span className="flex items-center gap-2 min-w-0">
+                <Search className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                <span className="truncate">Tìm nhanh dự án, công việc, nhân sự...</span>
               </span>
-              <kbd className="px-1.5 py-0.5 text-[10px] font-mono text-slate-500 bg-white border border-slate-200 rounded shadow-2xs">
+              <kbd className="hidden xl:inline px-1.5 py-0.5 text-[10px] font-mono text-slate-500 bg-white border border-slate-200 rounded shadow-2xs">
                 Ctrl K
               </kbd>
             </button>
@@ -185,18 +186,20 @@ export const Header: React.FC<HeaderProps> = ({
           )}
 
           {/* Thời điểm tra cứu (QC-05): mặc định theo giờ máy; Quản trị viên có thể cố định để nhập dữ liệu mẫu */}
-          <div className="relative hidden xl:block">
+          <div className="relative">
             <button type="button" onClick={() => canSetTime && (timeOpen ? setTimeOpen(false) : openTime())}
-              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[11px] ${config.evaluationTimestamp ? 'bg-amber-50 text-amber-900 border-amber-300' : 'bg-slate-100 text-slate-700 border-slate-200'} ${canSetTime ? 'cursor-pointer hover:border-[#152A55]' : 'cursor-default'}`}
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[11px] whitespace-nowrap ${config.evaluationTimestamp ? 'bg-amber-50 text-amber-900 border-amber-300' : 'bg-slate-100 text-slate-700 border-slate-200'} ${canSetTime ? 'cursor-pointer hover:border-[#152A55]' : 'cursor-default'}`}
               title={config.evaluationTimestamp ? 'Đang cố định thời điểm tra cứu (dùng để nhập dữ liệu mẫu).' : 'Theo giờ trên máy.'}>
               <Clock className="w-3 h-3" />
-              <span className="font-mono font-semibold">{formatDateTime(DEMO_QUERY_TIME)}</span>
-              {config.evaluationTimestamp && <span className="font-semibold">· cố định</span>}
+              <span className="font-mono font-semibold hidden xl:inline">{formatDateTime(DEMO_QUERY_TIME)}</span>
+              <span className="font-mono font-semibold hidden sm:inline xl:hidden">{formatDateTime(DEMO_QUERY_TIME).slice(0, 10)}</span>
+              <span className="font-mono font-semibold sm:hidden">{formatDateTime(DEMO_QUERY_TIME).slice(0, 5)}</span>
+              {config.evaluationTimestamp && <span className="font-semibold hidden 2xl:inline">· cố định</span>}
             </button>
             {timeOpen && (
-              <div className="absolute right-0 top-9 z-50 w-72 bg-white border border-slate-200 rounded-xl shadow-2xl p-3 space-y-2 text-xs">
+              <div className="absolute -right-24 sm:right-0 top-9 z-50 w-72 max-w-[calc(100vw-24px)] bg-white border border-slate-200 rounded-xl shadow-2xl p-3 space-y-2 text-xs">
                 <div className="font-bold text-[#0D1A36]">Thời điểm tra cứu</div>
-                <div className="text-[11px] text-slate-500">Mặc định theo giờ trên máy. Cố định một mốc khi cần nhập hoặc xem dữ liệu mẫu theo ngày khác.</div>
+                <div className="text-[11px] text-slate-500">Mặc định theo giờ trên máy. Cố định một mốc khi cần nhập hoặc xem dữ liệu mẫu theo ngày khác. Mốc này áp dụng cho mọi tài khoản và được ghi nhật ký thao tác.</div>
                 <div className="flex gap-1.5">
                   <DateInput value={qtDate} onChange={e => setQtDate(e.target.value)} className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg" />
                   <input type="time" value={qtTime} onChange={e => setQtTime(e.target.value)} className="w-24 px-2 py-1.5 bg-slate-50 border border-slate-300 rounded-lg font-mono" />

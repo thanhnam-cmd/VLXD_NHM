@@ -211,6 +211,7 @@ export interface ExternalReportItem {
   count: number;
   status: 'DU' | 'THIEU' | 'THUA';
   note?: string;
+  date?: string; // ngày làm việc được báo (mặc định: ngày gửi nhật ký)
 }
 
 export interface ExternalAssignment {

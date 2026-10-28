@@ -75,6 +75,13 @@ export const AssignmentView: React.FC<AssignmentViewProps> = ({ initialTab, init
   const selectedTask = tasks.find(t => t.id === taskId);
   const projectTasks = tasks.filter(t => t.projectId === projectId && isTaskOpen(t));
   const projCats = categories.filter(c => c.projectId === projectId).sort((a, b) => a.orderNum - b.orderNum);
+  // Ngày phân công cố định theo ngày của công việc (đã nhập khi tạo công việc); phần đã qua tính từ hôm nay
+  useEffect(() => {
+    if (!selectedTask) { setSDate(''); setEDate(''); return; }
+    const ts = selectedTask.startDate.slice(0, 10);
+    setSDate(ts < today ? today : ts);
+    setEDate(selectedTask.dueDate.slice(0, 10));
+  }, [selectedTask?.id, selectedTask?.startDate, selectedTask?.dueDate, today]);
   const start = sDate && sTime ? toDbDateTime(`${sDate} ${sTime}`) : '';
   const end = eDate && eTime ? toDbDateTime(`${eDate} ${eTime}`) : '';
   const hasTime = !!start && !!end;
@@ -104,8 +111,7 @@ export const AssignmentView: React.FC<AssignmentViewProps> = ({ initialTab, init
 
   const baseError = (() => {
     if (!projectId || !taskId || (staffIds.length === 0 && !extOn) || !hasTime) return null;
-    if (sDate < today) return 'Ngày bắt đầu không được trước ngày hiện tại. Vui lòng kiểm tra lại.';
-    if (eDate < sDate) return 'Ngày kết thúc không được trước ngày bắt đầu.';
+    if (eDate < sDate) return 'Công việc đã hết hạn, không lập phân công mới được. Hãy gia hạn công việc trước.';
     if (selectedTask && (toTime(start) < toTime(selectedTask.startDate) || toTime(end) > toTime(selectedTask.dueDate))) {
       return `Khoảng phân công phải nằm trong thời gian của công việc (${formatDate(selectedTask.startDate)} – ${formatDate(selectedTask.dueDate)}).`;
     }
@@ -151,19 +157,20 @@ export const AssignmentView: React.FC<AssignmentViewProps> = ({ initialTab, init
     }
     if (extOn && selectedTask) {
       const team = subcontractors.find(x => x.id === extTeamId);
+      // Đội khoán theo công việc: cùng thời gian với công việc, mỗi đội một phần việc
       const r = saveExternalAssignment({
         contractorId: extTeamId,
         projectId,
         taskId,
         workDescription: notes.trim() || `Hỗ trợ thi công ${selectedTask.code} · ${selectedTask.title}`,
-        startDate: start,
-        dueDate: end,
+        startDate: selectedTask.startDate,
+        dueDate: selectedTask.dueDate,
         workerCount: +extCount,
         nmhCoordinatorId: selectedTask.assigneeId || staffIds[0] || '',
         notes: 'Lập cùng phân công thi công'
       });
       if (!r.ok) return setFormErr(r.message);
-      messages.push(`Đã giao ${team?.companyName} hỗ trợ ${extCount} người.`);
+      messages.push(r.message || `Đã giao ${team?.companyName} hỗ trợ ${extCount} người.`);
     }
     toast.show(messages.join(' '));
     resetForm();
@@ -372,20 +379,22 @@ export const AssignmentView: React.FC<AssignmentViewProps> = ({ initialTab, init
                       </div>
                     )}
                   </div>
-                  {!hasTime && <Hint>Chọn ngày trước để thấy nhân sự Rảnh hay Trùng lịch.</Hint>}
+                  {!hasTime && <Hint>Chọn công việc trước để thấy nhân sự Rảnh hay Trùng lịch.</Hint>}
                 </div>
 
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <Label required>Từ ngày</Label>
-                    <DateInput value={sDate} onChange={e => { setSDate(e.target.value); if (!eDate || eDate < e.target.value) setEDate(e.target.value); }} className={`${inputCls} font-mono`} />
+                    <DateInput value={sDate} disabled onChange={() => undefined} title="Theo thời gian của công việc" className={`${inputCls} font-mono bg-slate-100 text-slate-700`} />
                   </div>
                   <div>
                     <Label required>Đến ngày</Label>
-                    <DateInput value={eDate} min={sDate || undefined} onChange={e => setEDate(e.target.value)} className={`${inputCls} font-mono`} />
+                    <DateInput value={eDate} disabled onChange={() => undefined} title="Theo thời gian của công việc" className={`${inputCls} font-mono bg-slate-100 text-slate-700`} />
                   </div>
                 </div>
-                <Hint>Phân công tính theo ngày làm việc (08:00–17:00).</Hint>
+                <Hint>{selectedTask
+                  ? <>Cố định theo thời gian công việc {formatDate(selectedTask.startDate)} – {formatDate(selectedTask.dueDate)}{selectedTask.startDate.slice(0, 10) < today ? ' (phần đã qua tính từ hôm nay)' : ''}. Muốn đổi ngày hãy sửa công việc. Giờ làm 08:00–17:00.</>
+                  : 'Ngày tự lấy theo công việc đã chọn, không sửa ở đây.'}</Hint>
 
                 <div className="space-y-1">
                   <label className="flex items-center gap-2 cursor-pointer">

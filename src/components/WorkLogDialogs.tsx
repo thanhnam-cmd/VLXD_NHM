@@ -440,7 +440,7 @@ export const WorkLogCard: React.FC<{
   const [lightbox, setLightbox] = useState<number | null>(null);
   const [cmt, setCmt] = useState<'NHAN_XET' | 'YEU_CAU_CAP_NHAT' | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
-  const [confirmFor, setConfirmFor] = useState<string | null>(null);
+  const [confirmFor, setConfirmFor] = useState<{ extId: string; date: string } | null>(null);
   const logDay = log.submittedAt.slice(0, 10);
   const canConfirm = (isManagerRole(store.currentUser) || isAdminRole(store.currentUser));
   const { tasks, projects, categories, externalAssignments, accounts } = store;
@@ -472,7 +472,8 @@ export const WorkLogCard: React.FC<{
         <div className="mt-2 rounded border border-purple-200 bg-purple-50/60 text-xs divide-y divide-purple-100">
           {(log.externalReports || []).map(r => {
             const e = externalAssignments.find(x => x.id === r.assignmentId);
-            const d = e && (e.dailyStaffing || []).find(x => x.date === logDay);
+            const day = r.date || logDay;
+            const d = e && (e.dailyStaffing || []).find(x => x.date === day);
             return (
               <div key={r.assignmentId} className="p-2 flex items-start gap-2 flex-wrap">
                 <Building2 className="w-3.5 h-3.5 shrink-0 mt-0.5 text-purple-700" />
@@ -484,7 +485,7 @@ export const WorkLogCard: React.FC<{
                 </div>
                 <DayConfirmBadge d={d} />
                 {canConfirm && e && d && !d.confirmed && (
-                  <button type="button" onClick={() => setConfirmFor(e.id)} className="px-2.5 py-1 rounded-md bg-purple-700 text-white font-semibold cursor-pointer">Xác nhận</button>
+                  <button type="button" onClick={() => setConfirmFor({ extId: e.id, date: day })} className="px-2.5 py-1 rounded-md bg-purple-700 text-white font-semibold cursor-pointer">Xác nhận</button>
                 )}
               </div>
             );
@@ -541,8 +542,8 @@ export const WorkLogCard: React.FC<{
       {lightbox !== null && <PhotoLightbox photos={photos} index={lightbox} onClose={() => setLightbox(null)} />}
       {cmt && <CommentModal log={log} kind={cmt} onClose={() => setCmt(null)} onDone={(m) => { setCmt(null); setMsg(m); window.setTimeout(() => setMsg(null), 3500); }} />}
       {confirmFor && (() => {
-        const e = externalAssignments.find(x => x.id === confirmFor);
-        return e ? <ConfirmDailyModal ext={e} date={logDay} onClose={() => setConfirmFor(null)} onDone={(m) => { setConfirmFor(null); setMsg(m); window.setTimeout(() => setMsg(null), 3500); }} /> : null;
+        const e = externalAssignments.find(x => x.id === confirmFor.extId);
+        return e ? <ConfirmDailyModal ext={e} date={confirmFor.date} onClose={() => setConfirmFor(null)} onDone={(m) => { setConfirmFor(null); setMsg(m); window.setTimeout(() => setMsg(null), 3500); }} /> : null;
       })()}
     </div>
   );

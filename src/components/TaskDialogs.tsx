@@ -85,7 +85,7 @@ export const TaskFormModal: React.FC<{
   onClose: () => void;
   onSaved: (msg: string) => void;
 }> = ({ project, task, lockedCategoryId, onClose, onSaved }) => {
-  const { categories, tasks, staff, teams, saveTask } = useStore();
+  const { categories, tasks, staff, saveTask, findConflicts } = useStore();
   const isEdit = !!task;
   const projCats = categories.filter(c => c.projectId === project.id).sort((a, b) => a.orderNum - b.orderNum);
   const [categoryId, setCategoryId] = useState(task?.categoryId || lockedCategoryId || '');
@@ -102,12 +102,16 @@ export const TaskFormModal: React.FC<{
   const startTime = task?.startDate?.slice(11, 16) || '08:00';
   const [endDate, setEndDate] = useState(task?.dueDate?.slice(0, 10) || (plus7 < pEnd ? plus7 : pEnd));
   const endTime = task?.dueDate?.slice(11, 16) || '17:00';
-  // Chọn theo tổ đội: mỗi tổ đội chỉ có một đội trưởng
-  const leaderOf = (teamId: string) => staff.find(s => s.isActive && s.roleTitle === 'DOI_TRUONG' && s.teamId === teamId);
-  const [teamId, setTeamId] = useState(() => {
-    const a = staff.find(s => s.id === task?.assigneeId);
-    return a?.roleTitle === 'DOI_TRUONG' ? a.teamId || '' : '';
-  });
+  // Chỉ chọn Đội trưởng đội thi công (mỗi tổ một đội trưởng); giữ người cũ khi sửa công việc cũ
+  const leaders = staff.filter(s => s.roleTitle === 'DOI_TRUONG' && (s.isActive || s.id === task?.assigneeId));
+  const oldNonLeader = task?.assigneeId ? staff.find(s => s.id === task.assigneeId && s.roleTitle !== 'DOI_TRUONG') : undefined;
+  const rangeStart = startDate ? toDbDateTime(`${startDate} ${startTime}`) : '';
+  const rangeEnd = endDate ? toDbDateTime(`${endDate} ${endTime}`) : '';
+  const busyNote = (id: string) => {
+    if (!rangeStart || !rangeEnd || rangeEnd < rangeStart) return '';
+    const c = findConflicts(id, rangeStart, rangeEnd);
+    return c.length ? (c.some(x => /nghỉ|bận/i.test(x.message)) ? 'có lịch nghỉ/bận' : 'đang có việc khác') : 'rảnh';
+  };
   const [desc, setDesc] = useState(task?.description || '');
   const [err, setErr] = useState<string | null>(null);
 
@@ -162,35 +166,6 @@ export const TaskFormModal: React.FC<{
       </div>
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <Label>Tổ đội thi công</Label>
-          <select value={teamId} onChange={e => {
-            setTeamId(e.target.value);
-            const l = leaderOf(e.target.value);
-            if (l) setAssigneeId(l.id);
-          }} className={inputCls}>
-            <option value="">-- Chọn theo tổ đội --</option>
-            {teams.map(t => {
-              const l = leaderOf(t.id);
-              return <option key={t.id} value={t.id} disabled={!l}>{t.code} – {t.name}{l ? ` (Đội trưởng: ${l.name})` : ' (chưa có đội trưởng)'}</option>;
-            })}
-          </select>
-        </div>
-        <div>
-          <Label required>Người phụ trách chính</Label>
-          <select value={assigneeId} onChange={e => { setAssigneeId(e.target.value); setTeamId(''); }} className={inputCls}>
-            <option value="">-- Chọn người phụ trách --</option>
-            <optgroup label="Đội trưởng đội thi công">
-              {staff.filter(s => (s.isActive || s.id === assigneeId) && s.roleTitle === 'DOI_TRUONG').map(s => <option key={s.id} value={s.id}>{s.name} – {s.teamName || s.roleTitleDisplay}</option>)}
-            </optgroup>
-            <optgroup label="Nhân sự khác">
-              {staff.filter(s => (s.isActive || s.id === assigneeId) && s.roleTitle !== 'DOI_TRUONG').map(s => <option key={s.id} value={s.id}>{s.name} – {s.roleTitleDisplay}</option>)}
-            </optgroup>
-          </select>
-        </div>
-      </div>
-      <Hint>Chọn tổ đội để tự điền đội trưởng của tổ. Chỉ định người phụ trách không tạo lịch thi công; hãy vào Phân công để bố trí nhân sự.</Hint>
-      <div className="grid grid-cols-2 gap-3">
-        <div>
           <Label required>Ngày bắt đầu</Label>
           <DateInput value={startDate} onChange={e => setStartDate(e.target.value)} className={inputCls} />
         </div>
@@ -199,7 +174,19 @@ export const TaskFormModal: React.FC<{
           <DateInput value={endDate} onChange={e => setEndDate(e.target.value)} className={inputCls} />
         </div>
       </div>
-      <Hint>Trong khoảng thời gian dự án {formatDate(project.startDate)} – {formatDate(project.dueDate)}. Công việc tính từ 08:00 ngày bắt đầu đến 17:00 ngày hoàn thành.</Hint>
+      <Hint>Trong khoảng thời gian dự án {formatDate(project.startDate)} – {formatDate(project.dueDate)}. Công việc tính từ 08:00 ngày bắt đầu đến 17:00 ngày hoàn thành. Phân công nhân sự và đội khoán ngoài của công việc dùng đúng khoảng ngày này.</Hint>
+      <div>
+        <Label required>Đội trưởng đội thi công phụ trách</Label>
+        <select value={assigneeId} onChange={e => setAssigneeId(e.target.value)} className={inputCls}>
+          <option value="">-- Chọn đội trưởng thi công --</option>
+          {leaders.map(s => {
+            const note = busyNote(s.id);
+            return <option key={s.id} value={s.id}>{s.name} – {s.teamName || 'Chưa gắn tổ'}{note ? ` (${note})` : ''}</option>;
+          })}
+          {oldNonLeader && <option value={oldNonLeader.id}>{oldNonLeader.name} – {oldNonLeader.roleTitleDisplay} (phụ trách cũ)</option>}
+        </select>
+        <Hint>Chọn ngày trước để thấy đội trưởng rảnh hay đang có việc. Đội trưởng nhận công việc và báo cáo hiện trường; nhân sự thi công bố trí ở nút Phân công.</Hint>
+      </div>
       <div>
         <Label>Mô tả kỹ thuật</Label>
         <textarea rows={3} maxLength={1000} value={desc} onChange={e => setDesc(e.target.value)} placeholder="Nội dung chi tiết…" className={inputCls} />

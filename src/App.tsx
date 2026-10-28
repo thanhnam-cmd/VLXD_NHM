@@ -153,7 +153,10 @@ const AppShell: React.FC = () => {
   const overdueCount = scoped.tasks.filter(t => openProjectIds.has(t.projectId) && isTaskOverdue(t.dueDate, t.status)).length;
   const upcomingCount = scoped.tasks.filter(t => openProjectIds.has(t.projectId) && isTaskUpcoming7Days(t.dueDate, t.status)).length;
   const affectedCount = isDirector || isTeamLead ? 0 : store.getAffectedAssignments().filter(a => store.visibleProjectIds.has(a.projectId)).length;
-  const totalNotifications = overdueCount + upcomingCount + affectedCount;
+  const pendingExternal = isDirector || isTeamLead ? [] : store.pendingDailyConfirmations().map(x => ({
+    key: `${x.ext.id}-${x.day.date}`, team: x.ext.contractorName, date: x.day.date, count: x.day.reportedCount ?? x.day.presentCount, workerCount: x.ext.workerCount
+  }));
+  const totalNotifications = overdueCount + upcomingCount + affectedCount + pendingExternal.length;
 
   if (!isAuthenticated) {
     return <LoginScreen accounts={accounts} onLogin={handleLogin} />;
@@ -335,9 +338,10 @@ const AppShell: React.FC = () => {
       <NotificationDrawer
         isOpen={isNotificationDrawerOpen}
         onClose={() => setIsNotificationDrawerOpen(false)}
-        tasks={scoped.tasks}
+        // Cùng nguồn với số trên chuông: chỉ dự án đang mở, phân công bị ảnh hưởng theo lịch nghỉ còn hiệu lực
+        tasks={scoped.tasks.filter(t => openProjectIds.has(t.projectId))}
         projects={visibleProjects}
-        assignments={isDirector || isTeamLead ? [] : scoped.assignments.filter(a => a.status === 'HIEU_LUC')}
+        assignments={isDirector || isTeamLead ? [] : store.getAffectedAssignments().filter(a => store.visibleProjectIds.has(a.projectId))}
         leaves={leaves}
         onSelectTask={(taskId, projectId) => {
           setIsNotificationDrawerOpen(false);
@@ -348,6 +352,8 @@ const AppShell: React.FC = () => {
           setIsNotificationDrawerOpen(false);
           go('assignments', { assignTab: 'leaves', assignFilter: 'affected' });
         }}
+        pendingExternal={pendingExternal}
+        onOpenPendingExternal={() => go('assignments', { assignTab: 'contractor', assignFilter: 'pending' })}
       />
 
       <QuickSearchModal

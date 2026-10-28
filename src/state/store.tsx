@@ -74,9 +74,13 @@ export const staffStatusOf = (count: number, workerCount?: number): 'DU' | 'THIE
   !workerCount || count === workerCount ? 'DU' : count > workerCount ? 'THUA' : 'THIEU';
 
 /** Các phần việc giao ngoài đang làm trong ngày của một công việc (theo công việc, hoặc khoán theo dự án) */
-export const activeExternalsFor = (exts: ExternalAssignment[], projectId: string, taskId: string, day: string) =>
-  exts.filter(e => e.status === 'HIEU_LUC' && e.startDate.slice(0, 10) <= day && e.dueDate.slice(0, 10) >= day
-    && (e.taskId ? e.taskId === taskId : e.projectId === projectId));
+export const activeExternalsFor = (exts: ExternalAssignment[], projectId: string, taskId: string, day: string) => {
+  const list = exts.filter(e => e.status === 'HIEU_LUC' && e.startDate.slice(0, 10) <= day && e.dueDate.slice(0, 10) >= day
+    && (e.taskId ? e.taskId === taskId : e.projectId === projectId))
+    .sort((a, b) => (a.taskId ? 0 : 1) - (b.taskId ? 0 : 1));
+  // Mỗi đội chỉ báo một lần cho công việc: có phần việc theo công việc thì không lặp lại phần khoán theo dự án
+  return list.filter((e, i) => list.findIndex(x => x.contractorId === e.contractorId) === i);
+};
 
 const ENTITY_LABEL: Record<string, string> = {
   customers: 'khách hàng', staff: 'nhân sự', accounts: 'tài khoản', projects: 'dự án', categories: 'hạng mục', tasks: 'công việc',
@@ -525,6 +529,16 @@ const useStoreState = () => {
     });
   };
 
+  /** Quản lý được chọn làm phụ trách dự án tự có dự án trong phạm vi (Phạm vi dự án) */
+  const grantScopeToManager = (projectId: string, managerStaffId?: string) => {
+    if (!managerStaffId) return;
+    setAccounts(prev => prev.map(a => (a.staffId === managerStaffId && normalizeRole(a.role) === 'QUAN_LY' && !(a.assignedProjectIds || []).includes(projectId)) ? {
+      ...a,
+      assignedProjectIds: [...(a.assignedProjectIds || []), projectId],
+      scopeGrants: { ...(a.scopeGrants || {}), [projectId]: { grantedBy: actor(), grantedAt: nowDb() } }
+    } : a));
+  };
+
   const createProject = (data: Omit<Project, 'id' | 'status'>): OpResult<Project> => {
     if (projects.some(p => p.code.toLowerCase() === data.code.trim().toLowerCase())) return fail('Mã đã được sử dụng. Vui lòng chọn mã khác.');
     const created: Project = { ...data, code: data.code.trim(), id: newId(), status: 'LAP_KE_HOACH', createdAt: nowDb() };
@@ -538,6 +552,7 @@ const useStoreState = () => {
         scopeGrants: { ...(a.scopeGrants || {}), [created.id]: { grantedBy: actor(), grantedAt: nowDb() } }
       } : a));
     }
+    grantScopeToManager(created.id, created.managerId);
     logAudit('TAO_MOI', 'Dự án', created.id, undefined, null, { ma_du_an: created.code, ten: created.name, trang_thai: 'LAP_KE_HOACH' });
     return ok(`Đã tạo dự án ${created.code}.`, created);
   };
@@ -551,6 +566,7 @@ const useStoreState = () => {
     if (outside.length > 0) return fail(`Còn công việc nằm ngoài thời gian mới của dự án (${outside.map(t => t.code).join(', ')}). Hãy điều chỉnh công việc trước.`);
     setProjects(prev => prev.map(p => p.id === id ? { ...p, ...data, code: p.code } : p));
     if (data.externalTeams || old.externalTeams) syncProjectExternals({ ...old, ...data, code: old.code });
+    if (data.managerId && data.managerId !== old.managerId) grantScopeToManager(id, data.managerId);
     const teamText = (list?: { contractorId: string; workerCount: number }[]) =>
       (list || []).map(x => `${subcontractors.find(c => c.id === x.contractorId)?.companyName || x.contractorId} (${x.workerCount} người)`).join('; ') || null;
     logAudit('DIEU_CHINH', 'Dự án', id, undefined,
@@ -645,6 +661,10 @@ const useStoreState = () => {
       const outside = assignments.filter(a => a.taskId === editId && isRecordActive(a) && (toTime(a.startDate) < toTime(data.startDate) || toTime(a.endDate) > toTime(data.dueDate)));
       if (outside.length > 0) return fail('Còn phân công nằm ngoài thời gian mới của công việc. Hãy điều chỉnh hoặc hủy phân công trước.');
       setTasks(prev => prev.map(t => t.id === editId ? { ...t, ...data, code: t.code, categoryCode: cat?.code, assigneeName: assignee?.name, lastUpdated: nowDb() } : t));
+      // Đội khoán theo công việc luôn cùng thời gian với công việc
+      if (old && (old.startDate !== data.startDate || old.dueDate !== data.dueDate)) {
+        setExternalAssignments(prev => prev.map(e => e.taskId === editId && e.status === 'HIEU_LUC' ? { ...e, startDate: data.startDate, dueDate: data.dueDate } : e));
+      }
       logAudit('DIEU_CHINH', 'Công việc', editId, undefined,
         { ten: old?.title, bat_dau: old?.startDate, ket_thuc: old?.dueDate, phu_trach: old?.assigneeName },
         { ten: data.title, bat_dau: data.startDate, ket_thuc: data.dueDate, phu_trach: assignee?.name });
@@ -850,7 +870,8 @@ const useStoreState = () => {
     return ok(`Đã thêm đơn vị ${data.companyName}.`);
   };
 
-  const saveExternalAssignment = (data: Omit<ExternalAssignment, 'id' | 'status' | 'contractorName'>, editId?: string): OpResult => {
+  const saveExternalAssignment = (input: Omit<ExternalAssignment, 'id' | 'status' | 'contractorName'>, editId?: string): OpResult => {
+    let data = input;
     const c = subcontractors.find(s => s.id === data.contractorId);
     if (!c) return fail('Vui lòng chọn đội thi công ngoài.');
     if (!editId && c.status !== 'HOP_TAC') return fail('Đơn vị đã ngừng hợp tác, không thể giao phần việc mới.');
@@ -861,8 +882,9 @@ const useStoreState = () => {
     if (!isTaskOpen(t)) return fail('Công việc đã hoàn thành hoặc đã hủy, không thể giao thêm.');
     if (!data.workDescription.trim()) return fail('Vui lòng nhập mô tả phần việc giao.');
     if (!data.nmhCoordinatorId) return fail('Vui lòng chọn nhân sự NMH phối hợp.');
-    if (!data.startDate || !data.dueDate || toTime(data.dueDate) <= toTime(data.startDate)) return fail('Thời gian kết thúc phải sau thời gian bắt đầu.');
-    if (toTime(data.startDate) < toTime(t.startDate) || toTime(data.dueDate) > toTime(t.dueDate)) return fail('Thời gian làm việc phải nằm trong thời gian của công việc được giao.');
+    // Phần việc theo công việc dùng đúng thời gian của công việc (không nhập ngày riêng)
+    data = { ...data, startDate: t.startDate, dueDate: t.dueDate };
+    if (toTime(data.dueDate) <= toTime(data.startDate)) return fail('Thời gian kết thúc phải sau thời gian bắt đầu.');
     if (data.workerCount !== undefined && (data.workerCount < 1 || data.workerCount > 200)) return fail('Số người dự kiến phải từ 1 đến 200.');
     if (data.contractValue !== undefined && data.contractValue <= 0) return fail('Giá trị khoán phải lớn hơn 0.');
     if (editId) {
@@ -870,6 +892,14 @@ const useStoreState = () => {
       setExternalAssignments(prev => prev.map(e => e.id === editId ? { ...e, ...data, contractorName: c.companyName } : e));
       logAudit('DIEU_CHINH', 'Phần việc giao ngoài', editId, undefined, { mo_ta: old?.workDescription, tu: old?.startDate, den: old?.dueDate }, { mo_ta: data.workDescription, tu: data.startDate, den: data.dueDate });
       return ok('Đã lưu phần việc giao.');
+    }
+    // Một đội chỉ có một phần việc còn hiệu lực trong một công việc: giao lại thì cập nhật phần việc cũ
+    const dup = externalAssignments.find(e => e.status === 'HIEU_LUC' && e.taskId === t.id && e.contractorId === c.id);
+    if (dup) {
+      setExternalAssignments(prev => prev.map(e => e.id === dup.id ? { ...e, workerCount: data.workerCount ?? e.workerCount, startDate: data.startDate, dueDate: data.dueDate,
+        contractValue: data.contractValue ?? e.contractValue, nmhCoordinatorId: data.nmhCoordinatorId || e.nmhCoordinatorId } : e));
+      logAudit('DIEU_CHINH', 'Phần việc giao ngoài', dup.id, 'Giao lại cùng đội cho cùng công việc', { so_nguoi: dup.workerCount }, { so_nguoi: data.workerCount ?? dup.workerCount });
+      return ok(`${c.companyName} đã có trong công việc ${t.code}: đã cập nhật số người ${data.workerCount ?? dup.workerCount}, không tạo thêm phần việc trùng.`);
     }
     const created: ExternalAssignment = { ...data, id: newId(), contractorName: c.companyName, status: 'HIEU_LUC', dailyStaffing: [] };
     setExternalAssignments(prev => [created, ...prev]);
@@ -917,10 +947,32 @@ const useStoreState = () => {
       ...x,
       dailyStaffing: [...(x.dailyStaffing || []).filter(d => d.date !== row.date), record].sort((a, b) => a.date.localeCompare(b.date))
     } : x));
+    // Đội trưởng báo nhân sự = một mục "báo cáo nhanh" (chỉ chữ) trong Nhật ký hiện trường để Quản lý xem, nhận xét, xác nhận
+    let noticeLogged = false;
+    if (isLeadUser) {
+      const pid = e.projectId || tasks.find(t => t.id === e.taskId)?.projectId || '';
+      const task = (e.taskId ? tasks.find(t => t.id === e.taskId) : undefined)
+        || tasks.find(t => t.projectId === pid && isTaskOpen(t) && isTaskAssignedToMe(t));
+      if (task) {
+        const reporter = staff.find(s => s.id === currentUser.staffId);
+        const label = status === 'DU' ? 'Đủ' : status === 'THIEU' ? 'Thiếu' : 'Thừa';
+        const notice: WorkLog = {
+          id: newId(), taskId: task.id, taskCode: task.code, projectId: task.projectId,
+          content: `Báo nhân sự đội khoán ngoài ngày ${formatDate(row.date)}: ${e.contractorName} có mặt ${row.presentCount}/${e.workerCount ?? '—'} người (${label}).${row.content ? ` ${row.content}` : ''}`,
+          submittedAt: now, submittedByAccountId: currentUser.id, submittedByUsername: currentUser.username, submittedByStaffId: currentUser.staffId,
+          submittedByStaffName: reporter?.name || currentUser.name, submittedByRole: reporter?.roleTitleDisplay || ROLE_LABEL[role],
+          recordedByManager: false, statusVerifiedByManager: false,
+          externalAssignmentId: e.id, externalTeamId: e.contractorId, externalTeamCount: row.presentCount, externalStaffingStatus: status, externalTeamNote: row.content || undefined,
+          externalReports: [{ assignmentId: e.id, contractorId: e.contractorId, contractorName: e.contractorName, workerCount: e.workerCount, count: row.presentCount, status, note: row.content || undefined, date: row.date }]
+        };
+        setWorkLogs(prev => [notice, ...prev]);
+        noticeLogged = true;
+      }
+    }
     logAudit(existing ? 'DIEU_CHINH' : 'TAO_MOI', 'Nhân sự đội ngoài theo ngày', `${extId}-${row.date}`, isLeadUser ? 'Đội trưởng báo cáo' : 'Quản lý xác nhận',
       existing ? { co_mat: existing.presentCount, da_xac_nhan: !!existing.confirmed } : null, { co_mat: row.presentCount, da_xac_nhan: !isLeadUser });
     return ok(isLeadUser
-      ? `Đã gửi nhân sự đội ngoài ngày ${formatDate(row.date)}: ${row.presentCount} người. Chờ Quản lý xác nhận.`
+      ? `Đã gửi nhân sự đội ngoài ngày ${formatDate(row.date)}: ${row.presentCount} người${noticeLogged ? ' (đã ghi vào Nhật ký hiện trường)' : ''}. Chờ Quản lý xác nhận.`
       : `Đã xác nhận nhân sự đội ngoài ngày ${formatDate(row.date)}: ${row.presentCount} người.`);
   };
 
@@ -1256,9 +1308,9 @@ const useStoreState = () => {
     return ok(`Đã cập nhật phạm vi dự án của ${a.name}: ${projectIds.length} dự án.`);
   };
 
-  /** Đặt nhanh thời điểm tra cứu (Quản trị viên); chuỗi rỗng = dùng giờ máy */
+  /** Đặt nhanh thời điểm tra cứu (Quản trị viên, Quản lý, Đội trưởng); chuỗi rỗng = dùng giờ máy */
   const setQueryTime = (value: string): OpResult => {
-    if (!isAdminRole(currentUser)) return fail('Chỉ Quản trị viên được đổi thời điểm tra cứu.');
+    if (isDirectorRole(currentUser)) return fail('Ban giám đốc chỉ xem, không đổi thời điểm tra cứu.');
     if (value && !/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(value)) return fail('Thời điểm tra cứu không hợp lệ.');
     if ((config.evaluationTimestamp || '') === value) return ok(value ? 'Thời điểm tra cứu không đổi.' : 'Đang dùng giờ máy.');
     return saveConfig({ ...config, evaluationTimestamp: value });

@@ -82,10 +82,6 @@ const ExternalAssignModal: React.FC<{ ext?: ExternalAssignment; onClose: () => v
   const [projectId, setProjectId] = useState(ext?.projectId || tasks.find(t => t.id === ext?.taskId)?.projectId || '');
   const [taskId, setTaskId] = useState(ext?.taskId || '');
   const [desc, setDesc] = useState(ext?.workDescription || '');
-  const [sDate, setSDate] = useState(ext?.startDate.slice(0, 10) || '');
-  const [sTime, setSTime] = useState(ext?.startDate.slice(11, 16) || '08:00');
-  const [eDate, setEDate] = useState(ext?.dueDate.slice(0, 10) || '');
-  const [eTime, setETime] = useState(ext?.dueDate.slice(11, 16) || '17:00');
   const [workers, setWorkers] = useState(ext?.workerCount ? String(ext.workerCount) : '');
   const [value, setValue] = useState(ext?.contractValue ? String(ext.contractValue) : '');
   const [coord, setCoord] = useState(ext?.nmhCoordinatorId || '');
@@ -99,7 +95,8 @@ const ExternalAssignModal: React.FC<{ ext?: ExternalAssignment; onClose: () => v
         <button type="button" className={btnPrimary} onClick={() => {
           const r = saveExternalAssignment({
             contractorId, projectId, taskId, workDescription: desc.trim(),
-            startDate: sDate ? toDbDateTime(`${sDate} ${sTime}`) : '', dueDate: eDate ? toDbDateTime(`${eDate} ${eTime}`) : '',
+            // Thời gian lấy đúng theo công việc (store cũng ép lại)
+            startDate: task?.startDate || '', dueDate: task?.dueDate || '',
             workerCount: workers ? parseInt(workers, 10) : undefined,
             contractValue: value ? parseInt(value.replace(/\D/g, ''), 10) : undefined,
             nmhCoordinatorId: coord, notes: notes.trim()
@@ -131,21 +128,16 @@ const ExternalAssignModal: React.FC<{ ext?: ExternalAssignment; onClose: () => v
           <option value="">-- Chọn công việc --</option>
           {tasks.filter(t => t.projectId === projectId && (isTaskOpen(t) || t.id === taskId)).map(t => <option key={t.id} value={t.id}>{t.code} · {t.title}</option>)}
         </select>
-        {task && <Hint>Thời gian công việc: {formatDateTime(task.startDate)} – {formatDateTime(task.dueDate)}</Hint>}
+
       </div>
       <div>
         <Label required>Mô tả phần việc giao</Label>
         <textarea rows={2} maxLength={500} value={desc} onChange={e => setDesc(e.target.value)} placeholder="Ví dụ: Kéo cáp và lắp camera bãi xe, tầng hầm" className={inputCls} />
       </div>
-      <div className="grid grid-cols-2 gap-3">
-        <div>
-          <Label required>Bắt đầu dự kiến</Label>
-          <DateInput value={sDate} onChange={e => setSDate(e.target.value)} className={inputCls} />
-        </div>
-        <div>
-          <Label required>Kết thúc dự kiến</Label>
-          <DateInput value={eDate} onChange={e => setEDate(e.target.value)} className={inputCls} />
-        </div>
+      <div className="p-2.5 rounded-lg bg-slate-50 border border-slate-200 text-xs">
+        <span className="font-semibold text-slate-700">Thời gian làm việc: </span>
+        {task ? <span className="font-mono">{formatDateTime(task.startDate)} – {formatDateTime(task.dueDate)}</span> : <span className="text-slate-400">chọn công việc</span>}
+        <div className="text-[10px] text-slate-500 mt-0.5">Cố định theo thời gian của công việc; muốn đổi hãy sửa công việc. Một đội chỉ có một phần việc trong mỗi công việc – giao lại cùng đội sẽ cập nhật phần việc cũ.</div>
       </div>
       <div className="grid grid-cols-3 gap-3">
         <div><Label>Số người dự kiến</Label><input type="number" min={1} max={200} value={workers} onChange={e => setWorkers(e.target.value)} className={`${inputCls} font-mono`} /></div>
@@ -182,6 +174,18 @@ export const DailyStaffingModal: React.FC<{ ext: ExternalAssignment; onClose: ()
   const [mNote, setMNote] = useState(existing?.managerNote || '');
   const [status, setStatus] = useState<'DU' | 'THIEU' | 'THUA'>(existing?.reportedStatus || staffStatusOf(existing?.presentCount ?? ext.workerCount ?? 0, ext.workerCount));
   const [err, setErr] = useState<string | null>(null);
+  // Đổi ngày: nạp lại số liệu đã có của ngày đó (hoặc để trống để báo mới)
+  const firstDate = React.useRef(date);
+  React.useEffect(() => {
+    if (firstDate.current === date) return;
+    firstDate.current = date;
+    setCount(existing ? String(existing.presentCount) : '');
+    setNames(existing?.names?.split(', ').join('\n') || '');
+    setContent(existing?.content || '');
+    setMNote(existing?.managerNote || '');
+    setStatus(existing?.reportedStatus || staffStatusOf(existing?.presentCount ?? ext.workerCount ?? 0, ext.workerCount));
+    setErr(null);
+  }, [date]);
   const lockedForLead = isLeadUser && existing?.confirmed;
   return (
     <Modal title={isLeadUser ? 'Báo nhân sự đội khoán trong ngày' : 'Nhập / xác nhận nhân sự đội khoán trong ngày'} subtitle={`${ext.contractorName} · ${formatDate(ext.startDate)} – ${formatDate(ext.dueDate)}`} onClose={onClose} size="sm"
