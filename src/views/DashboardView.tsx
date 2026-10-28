@@ -75,6 +75,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   // 3.1. Phân công bị ảnh hưởng bởi lịch nghỉ/bận
   const affectedAssignments = store.getAffectedAssignments().filter(a => visibleProjectIds.has(a.projectId));
 
+  // 3.1b. Nhân sự đội khoán ngoài đội trưởng đã báo, chờ Quản lý xác nhận
+  const pendingExternalDays = store.pendingDailyConfirmations ? store.pendingDailyConfirmations() : [];
+
   // 3.2. Chờ xác nhận hoàn thành
   const pendingApprovalTasks = tasks.filter(t => {
     if (t.status !== 'DANG_THUC_HIEN' && t.status !== 'doing') return false;
@@ -273,7 +276,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           <div className="text-xs font-bold text-slate-800 uppercase tracking-wider">
             Cần xử lý ngay
           </div>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
             {/* Mục 1: Phân công bị ảnh hưởng */}
             <button
               type="button"
@@ -313,6 +316,27 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 pendingApprovalTasks.length > 0 ? 'bg-amber-200/70 text-amber-900' : 'text-slate-400'
               }`}>
                 {pendingApprovalTasks.length}
+              </span>
+            </button>
+
+            {/* Mục 2b: Nhân sự đội khoán ngoài chờ xác nhận */}
+            <button
+              type="button"
+              onClick={() => onNavigate('assignments', { assignTab: 'contractor', assignFilter: 'pending' })}
+              className={`p-3 rounded-lg border text-left transition-all cursor-pointer flex items-center justify-between ${
+                pendingExternalDays.length > 0
+                  ? 'bg-amber-50 border-amber-300 text-amber-900 hover:bg-amber-100/80'
+                  : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'
+              }`}
+            >
+              <div>
+                <div className="text-xs font-semibold">Nhân sự đội ngoài chờ xác nhận</div>
+                <div className="text-[11px] text-slate-500 mt-0.5">Đội trưởng đã báo đủ/thiếu trong ngày</div>
+              </div>
+              <span className={`text-xl font-bold font-mono px-2 py-0.5 rounded-md ${
+                pendingExternalDays.length > 0 ? 'bg-amber-200/70 text-amber-900' : 'text-slate-400'
+              }`}>
+                {pendingExternalDays.length}
               </span>
             </button>
 

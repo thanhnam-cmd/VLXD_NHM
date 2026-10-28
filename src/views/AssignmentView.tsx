@@ -19,7 +19,7 @@ export interface AssignmentDraft {
 
 interface AssignmentViewProps {
   initialTab?: 'assignments' | 'leaves' | 'contractor';
-  initialFilter?: 'unassigned' | 'affected';
+  initialFilter?: 'unassigned' | 'affected' | 'pending';
   draft?: AssignmentDraft;
 }
 
@@ -676,7 +676,7 @@ export const AssignmentView: React.FC<AssignmentViewProps> = ({ initialTab, init
         </div>
       )}
 
-      {activeSubTab === 'contractor' && <ExternalTeamsTab />}
+      {activeSubTab === 'contractor' && <ExternalTeamsTab initialFilter={initialFilter} />}
 
       {/* Hộp thoại dùng chung */}
       {editAsg && <EditAssignmentModal assignment={editAsg} onClose={() => setEditAsg(null)} onSaved={(m) => { setEditAsg(null); toast.show(m); }} />}

@@ -14,6 +14,7 @@ import { CategoryFormModal, TaskFormModal, TaskStatusConfirm } from '../componen
 import { UploadDocModal, DocsTable, latestUploadAt, displayVersion } from '../components/DocDialogs.tsx';
 import { EditAssignmentModal, CancelAssignmentDialog } from '../components/AssignmentDialogs.tsx';
 import { taskApprovalNote, RecordResultModal } from '../components/WorkLogDialogs.tsx';
+import { ExternalDetailDrawer } from './ExternalTeamsTab.tsx';
 import type { AssignmentDraft } from './AssignmentView.tsx';
 
 interface ProjectDetailViewProps {
@@ -45,6 +46,8 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
   const [editProject, setEditProject] = useState(false);
   const [recordFor, setRecordFor] = useState<Task | null>(null);
   const [menuId, setMenuId] = useState<string | null>(null);
+  // Ngăn nhân sự đội khoán ngoài theo ngày (xem, xác nhận)
+  const [extDrawer, setExtDrawer] = useState<string | null>(null);
   const [statusMenu, setStatusMenu] = useState(false);
   const [editAsg, setEditAsg] = useState<Assignment | null>(null);
   const [cancelAsg, setCancelAsg] = useState<Assignment | null>(null);
@@ -187,11 +190,16 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
               <div className="flex items-center gap-1.5 text-xs text-slate-500 mt-1 flex-wrap">
                 <Building2 className="w-3.5 h-3.5 text-purple-500" />
                 Đội khoán ngoài:
-                {(project.externalTeams || []).map(x => (
-                  <span key={x.contractorId} className="px-2 py-0.5 rounded-full bg-purple-50 border border-purple-200 text-purple-800 font-semibold">
-                    {store.subcontractors.find(c => c.id === x.contractorId)?.companyName || 'Đội đã xóa'} · {x.workerCount} người
-                  </span>
-                ))}
+                {(project.externalTeams || []).map(x => {
+                  const pe = externalAssignments.find(e => !e.taskId && e.projectId === project.id && e.contractorId === x.contractorId && e.status === 'HIEU_LUC');
+                  const pending = (pe?.dailyStaffing || []).filter(d => !d.confirmed && d.reportedBy).length;
+                  return (
+                    <button key={x.contractorId} type="button" disabled={!pe} onClick={() => pe && setExtDrawer(pe.id)} title={pe ? 'Xem và xác nhận nhân sự theo ngày' : undefined}
+                      className={`px-2 py-0.5 rounded-full border font-semibold ${pending ? 'bg-amber-100 border-amber-300 text-amber-900' : 'bg-purple-50 border-purple-200 text-purple-800'} ${pe ? 'cursor-pointer hover:underline' : ''}`}>
+                      {store.subcontractors.find(c => c.id === x.contractorId)?.companyName || 'Đội đã xóa'} · {x.workerCount} người{pending ? ` · ${pending} ngày chờ xác nhận` : ''}
+                    </button>
+                  );
+                })}
               </div>
             )}
           </div>
@@ -416,9 +424,17 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
                               {task.locationArea && (
                                 <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 font-mono">{task.locationArea}</span>
                               )}
-                              {externalAssignments.some(e => e.taskId === task.id && e.status === 'HIEU_LUC') && (
-                                <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-50 text-purple-700 border border-purple-200">Có phần việc giao ngoài</span>
-                              )}
+                              {(() => {
+                                const exts = externalAssignments.filter(e => e.status === 'HIEU_LUC' && e.taskId === task.id);
+                                if (exts.length === 0) return null;
+                                const pending = exts.reduce((n, e) => n + (e.dailyStaffing || []).filter(d => !d.confirmed && d.reportedBy).length, 0);
+                                return (
+                                  <button type="button" onClick={() => setExtDrawer(exts[0].id)} title="Xem và xác nhận nhân sự đội khoán ngoài theo ngày"
+                                    className={`text-[10px] px-1.5 py-0.5 rounded border font-semibold cursor-pointer ${pending ? 'bg-amber-100 text-amber-800 border-amber-300' : 'bg-purple-50 text-purple-700 border-purple-200'}`}>
+                                    Đội ngoài: {exts.map(e => `${e.contractorName} (${e.workerCount ?? '—'} người)`).join(', ')}{pending ? ` · ${pending} ngày chờ xác nhận` : ''}
+                                  </button>
+                                );
+                              })()}
                             </div>
                             <button type="button" onClick={() => onOpenWorklogs(task.id)} className="flex items-start gap-2 text-xs pt-1 text-left hover:underline cursor-pointer">
                               <span className="text-slate-400 font-medium shrink-0">Kết quả:</span>
@@ -612,6 +628,7 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
         <ProjectStatusDialog project={project} kind={projectDialog} onClose={() => setProjectDialog(null)}
           onDone={(m) => { setProjectDialog(null); toast.show(m); }} onViewTasks={() => { setProjectDialog(null); setActiveTab('tasks'); }} />
       )}
+      {extDrawer && <ExternalDetailDrawer extId={extDrawer} onClose={() => setExtDrawer(null)} onMessage={toast.show} />}
       {editProject && <ProjectFormModal project={project} onClose={() => setEditProject(false)} onSaved={() => { setEditProject(false); toast.show(`Đã lưu thay đổi dự án ${project.code}.`); }} />}
       {recordFor && <RecordResultModal initialProjectId={project.id} initialTaskId={recordFor.id} onClose={() => setRecordFor(null)} onSaved={(m) => { setRecordFor(null); toast.show(m); }} />}
       {editAsg && <EditAssignmentModal assignment={editAsg} onClose={() => setEditAsg(null)} onSaved={(m) => { setEditAsg(null); toast.show(m); }} />}

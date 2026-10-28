@@ -1,10 +1,12 @@
-import React, { useRef, useState } from 'react';
-import type { WorkLog, Task, UserAccount } from '../types/index.ts';
-import { useStore, AppStore } from '../state/store.tsx';
+import React, { useEffect, useRef, useState } from 'react';
+import type { WorkLog, Task, UserAccount, ExternalReportItem } from '../types/index.ts';
+import { useStore, AppStore, activeExternalsFor, staffStatusOf } from '../state/store.tsx';
+import { DEMO_QUERY_TIME } from '../utils/progressCalculator.ts';
 import { Modal, Drawer, Label, Hint, ErrorBox, inputCls, btnPrimary, btnSecondary } from './ui.tsx';
 import { formatDate, formatDateTime, isManagerRole, isAdminRole, isTeamLeadRole, normalizeRole, canOperate } from '../utils/domain.ts';
 import { X, Camera, AlertCircle, Building2, ChevronLeft, ChevronRight, Download, MessageSquare, RotateCcw, CheckCircle2 } from 'lucide-react';
 import { renderSamplePhoto, compressImage, downloadUrl } from '../utils/fileArt.ts';
+import { ConfirmDailyModal, DayConfirmBadge, STAFF_STATUS_LABEL } from './ExternalDailyDialogs.tsx';
 
 /** Nhãn trạng thái thẻ báo cáo suy ra từ dữ liệu (MH-12, Bảng 3.10) */
 export const getLogLabel = (log: WorkLog, task?: Task) => {
@@ -167,7 +169,21 @@ export const WorkLogForm: React.FC<{
     .filter(t => t.projectId === projectId && t.status !== 'HUY' && (!isLead || isTaskAssignedToMe(t)))
     .map(t => ({ t, cat: categories.find(c => c.id === t.categoryId) }))
     .sort((a, b) => (a.cat?.orderNum || 0) - (b.cat?.orderNum || 0));
-  const activeExternals = externalAssignments.filter(e => e.taskId === taskId && e.status === 'HIEU_LUC');
+  // Đội khoán ngoài đang làm hôm nay của công việc này (theo công việc hoặc khoán theo dự án): mỗi đội một dòng báo cáo
+  const today = DEMO_QUERY_TIME.slice(0, 10);
+  const todayExts = projectId && taskId && !correctionOf ? activeExternalsFor(externalAssignments, projectId, taskId, today) : [];
+  const [extRows, setExtRows] = useState<Record<string, { count: string; status: 'DU' | 'THIEU' | 'THUA'; note: string }>>({});
+  useEffect(() => {
+    const next: typeof extRows = {};
+    todayExts.forEach(e => {
+      const d = (e.dailyStaffing || []).find(x => x.date === today);
+      const c = d ? d.presentCount : (e.workerCount ?? 0);
+      next[e.id] = { count: String(c), status: (d?.reportedStatus as any) || staffStatusOf(c, e.workerCount), note: d?.reportNote || '' };
+    });
+    setExtRows(next);
+  }, [taskId, projectId, todayExts.map(e => e.id).join(',')]);
+  const setExtRow = (id: string, patch: Partial<{ count: string; status: 'DU' | 'THIEU' | 'THUA'; note: string }>) =>
+    setExtRows(prev => ({ ...prev, [id]: { ...prev[id], ...patch } }));
 
   const addPhotos = (list: FileList | null) => {
     if (!list) return;
@@ -186,6 +202,14 @@ export const WorkLogForm: React.FC<{
   const submit = () => {
     if (!projectId) return setErr('Vui lòng chọn dự án.');
     if (!taskId) return setErr(isLead ? 'Vui lòng chọn công việc.' : 'Vui lòng chọn hạng mục và công việc.');
+    const reports: ExternalReportItem[] = [];
+    for (const e of todayExts) {
+      const locked = (e.dailyStaffing || []).find(x => x.date === today && x.confirmed) && isLead;
+      const row = extRows[e.id];
+      if (locked || !row) continue;
+      if (!/^\d+$/.test(row.count) || +row.count > 200) return setErr(`Vui lòng nhập số người có mặt hôm nay của ${e.contractorName} (0–200).`);
+      reports.push({ assignmentId: e.id, contractorId: e.contractorId, contractorName: e.contractorName, workerCount: e.workerCount, count: +row.count, status: row.status, note: row.note.trim() || undefined });
+    }
     if (extNoteOn && !extTeamId) return setErr('Vui lòng chọn tên đội thi công ngoài.');
     if (extNoteOn && extTeamCount && !(/^\d+$/.test(extTeamCount) && +extTeamCount >= 0 && +extTeamCount <= 200)) return setErr('Số người của đội thi công ngoài phải từ 0 đến 200.');
     setBusy(true);
@@ -201,7 +225,8 @@ export const WorkLogForm: React.FC<{
       externalTeamId: extNoteOn ? extTeamId : undefined,
       externalTeamCount: extNoteOn && extTeamCount !== '' ? +extTeamCount : undefined,
       externalStaffingStatus: extNoteOn && extStatus ? extStatus : undefined,
-      externalTeamNote: extNoteOn && extNote.trim() ? extNote.trim() : undefined
+      externalTeamNote: extNoteOn && extNote.trim() ? extNote.trim() : undefined,
+      externalReports: reports.length ? reports : undefined
     });
     setBusy(false);
     if (!r.ok) return setErr(r.message);
@@ -240,15 +265,48 @@ export const WorkLogForm: React.FC<{
         <Label>Khó khăn, vướng mắc</Label>
         <textarea rows={2} maxLength={1000} value={issues} onChange={e => setIssues(e.target.value)} placeholder="Tối đa 1.000 ký tự" className={inputCls} />
       </div>
-      {activeExternals.length > 0 && (
-        <div>
-          <Label>Phần việc giao ngoài liên quan</Label>
-          <select value={externalId} onChange={e => setExternalId(e.target.value)} className={inputCls}>
-            <option value="">-- Không gắn phần việc giao ngoài --</option>
-            {activeExternals.map(e => <option key={e.id} value={e.id}>{e.contractorName} · {formatDate(e.startDate)} – {formatDate(e.dueDate)}</option>)}
-          </select>
+      {todayExts.length > 0 && (
+        <div className="rounded-xl border-2 border-purple-200 bg-purple-50/40 p-3 space-y-2.5">
+          <div className="flex items-center gap-2 font-bold text-purple-900">
+            <Building2 className="w-4 h-4" /> Đội khoán ngoài làm việc hôm nay ({formatDate(today)}) <span className="text-red-500">(*)</span>
+          </div>
+          <Hint>{isLead ? 'Báo số người có mặt và đủ/thiếu so với số khoán. Quản lý sẽ xác nhận số chính thức để làm báo cáo.' : 'Số người Quản lý nhập được ghi là số đã xác nhận.'}</Hint>
+          {todayExts.map(e => {
+            const d = (e.dailyStaffing || []).find(x => x.date === today);
+            const row = extRows[e.id];
+            if (!row) return null;
+            if (isLead && d?.confirmed) return (
+              <div key={e.id} className="p-2.5 rounded-lg bg-white border border-emerald-200 text-emerald-900">
+                <strong>{e.contractorName}</strong> · khoán {e.workerCount ?? '—'} người — Quản lý đã xác nhận <strong>{d.presentCount} người</strong>{d.managerNote ? `: ${d.managerNote}` : ''}
+              </div>
+            );
+            return (
+              <div key={e.id} className="p-2.5 rounded-lg bg-white border border-purple-200 space-y-2">
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <span className="font-semibold text-slate-900">{e.contractorName}</span>
+                  <span className="text-[11px] text-slate-500">{e.taskId ? 'Theo công việc' : 'Khoán theo dự án'} · khoán <strong>{e.workerCount ?? '—'}</strong> người</span>
+                </div>
+                <div className="flex items-end gap-2 flex-wrap">
+                  <div className="w-28">
+                    <Label>Số người có mặt</Label>
+                    <input type="number" min={0} max={200} value={row.count} className={`${inputCls} font-mono`}
+                      onChange={ev => setExtRow(e.id, { count: ev.target.value, status: /^\d+$/.test(ev.target.value) ? staffStatusOf(+ev.target.value, e.workerCount) : row.status })} />
+                  </div>
+                  <div className="flex gap-1.5">
+                    {([['DU', 'Đủ'], ['THIEU', 'Thiếu'], ['THUA', 'Thừa']] as const).map(([k, l]) => (
+                      <button key={k} type="button" onClick={() => setExtRow(e.id, { status: k })}
+                        className={`px-3 py-2 rounded-lg border font-semibold cursor-pointer ${row.status === k ? (k === 'DU' ? 'bg-emerald-600 text-white border-emerald-600' : k === 'THIEU' ? 'bg-red-600 text-white border-red-600' : 'bg-amber-500 text-white border-amber-500') : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'}`}>{l}</button>
+                    ))}
+                  </div>
+                  <input value={row.note} maxLength={300} onChange={ev => setExtRow(e.id, { note: ev.target.value })} placeholder="Ghi chú (vd: thiếu 1 thợ buổi chiều)" className={`${inputCls} flex-1 min-w-[160px]`} />
+                </div>
+                {d && !d.confirmed && <div className="text-[11px] text-amber-700">Đã báo {d.reportedCount ?? d.presentCount} người lúc {formatDateTime(d.reportedAt || d.updatedAt)} – gửi lại sẽ cập nhật số mới.</div>}
+              </div>
+            );
+          })}
         </div>
       )}
+      {todayExts.length === 0 && (
       <div className={`rounded-xl border p-3 space-y-2.5 ${extNoteOn ? 'border-purple-200 bg-purple-50/40' : 'border-slate-200'}`}>
         <label className="flex items-center gap-2 cursor-pointer font-semibold text-slate-800">
           <input type="checkbox" checked={extNoteOn} onChange={e => {
@@ -256,7 +314,7 @@ export const WorkLogForm: React.FC<{
             const links = visibleProjects.find(p => p.id === projectId)?.externalTeams || [];
             if (e.target.checked && !extTeamId && links.length) { setExtTeamId(links[0].contractorId); if (!extTeamCount) setExtTeamCount(String(links[0].workerCount)); }
           }} />
-          <Building2 className="w-4 h-4 text-purple-600" /> Ghi chú đội thi công ngoài (nếu có)
+          <Building2 className="w-4 h-4 text-purple-600" /> Ghi chú đội thi công ngoài (đội không có trong phân công hôm nay)
         </label>
         {extNoteOn && (
           <>
@@ -299,6 +357,7 @@ export const WorkLogForm: React.FC<{
           </>
         )}
       </div>
+      )}
       <div>
         <Label>Ảnh hiện trường</Label>
         <button type="button" onClick={() => fileRef.current?.click()} className="w-full p-3 border-2 border-dashed border-slate-300 rounded-lg text-slate-500 hover:border-blue-500 flex items-center justify-center gap-2 cursor-pointer">
@@ -381,6 +440,9 @@ export const WorkLogCard: React.FC<{
   const [lightbox, setLightbox] = useState<number | null>(null);
   const [cmt, setCmt] = useState<'NHAN_XET' | 'YEU_CAU_CAP_NHAT' | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
+  const [confirmFor, setConfirmFor] = useState<string | null>(null);
+  const logDay = log.submittedAt.slice(0, 10);
+  const canConfirm = (isManagerRole(store.currentUser) || isAdminRole(store.currentUser));
   const { tasks, projects, categories, externalAssignments, accounts } = store;
   const t = tasks.find(x => x.id === log.taskId);
   const p = projects.find(x => x.id === log.projectId);
@@ -406,7 +468,30 @@ export const WorkLogCard: React.FC<{
         <div className="text-right text-[11px] text-slate-400 font-mono shrink-0">{formatDateTime(log.submittedAt)}</div>
       </div>
       <p className="text-xs text-slate-700 leading-relaxed whitespace-pre-line">{log.content}</p>
-      {extTeam && (
+      {(log.externalReports || []).length > 0 && (
+        <div className="mt-2 rounded border border-purple-200 bg-purple-50/60 text-xs divide-y divide-purple-100">
+          {(log.externalReports || []).map(r => {
+            const e = externalAssignments.find(x => x.id === r.assignmentId);
+            const d = e && (e.dailyStaffing || []).find(x => x.date === logDay);
+            return (
+              <div key={r.assignmentId} className="p-2 flex items-start gap-2 flex-wrap">
+                <Building2 className="w-3.5 h-3.5 shrink-0 mt-0.5 text-purple-700" />
+                <div className="flex-1 min-w-0 text-purple-900">
+                  <strong>{r.contractorName || e?.contractorName}</strong> · báo <strong>{r.count}/{r.workerCount ?? e?.workerCount ?? '—'}</strong> người
+                  <span className={`ml-1 text-[10px] px-1.5 py-0.5 rounded font-bold ${STAFF_STATUS_LABEL[r.status]?.cls}`}>{STAFF_STATUS_LABEL[r.status]?.label}</span>
+                  {r.note && <span className="text-slate-600"> – {r.note}</span>}
+                  {d?.confirmed && <div className="text-emerald-800 mt-0.5">Quản lý xác nhận <strong>{d.presentCount} người</strong>{d.managerNote ? `: ${d.managerNote}` : ''}</div>}
+                </div>
+                <DayConfirmBadge d={d} />
+                {canConfirm && e && d && !d.confirmed && (
+                  <button type="button" onClick={() => setConfirmFor(e.id)} className="px-2.5 py-1 rounded-md bg-purple-700 text-white font-semibold cursor-pointer">Xác nhận</button>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+      {extTeam && !(log.externalReports || []).length && (
         <div className="mt-2 p-2 rounded bg-purple-50 border border-purple-200 text-purple-900 text-xs flex items-start gap-1.5">
           <Building2 className="w-3.5 h-3.5 shrink-0 mt-0.5" />
           <div>
@@ -455,6 +540,10 @@ export const WorkLogCard: React.FC<{
       </div>
       {lightbox !== null && <PhotoLightbox photos={photos} index={lightbox} onClose={() => setLightbox(null)} />}
       {cmt && <CommentModal log={log} kind={cmt} onClose={() => setCmt(null)} onDone={(m) => { setCmt(null); setMsg(m); window.setTimeout(() => setMsg(null), 3500); }} />}
+      {confirmFor && (() => {
+        const e = externalAssignments.find(x => x.id === confirmFor);
+        return e ? <ConfirmDailyModal ext={e} date={logDay} onClose={() => setConfirmFor(null)} onDone={(m) => { setConfirmFor(null); setMsg(m); window.setTimeout(() => setMsg(null), 3500); }} /> : null;
+      })()}
     </div>
   );
 };

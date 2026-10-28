@@ -31,7 +31,7 @@ import { TeamLeadProjectView } from './views/TeamLeadProjectView.tsx';
 export interface NavParams {
   projectStatus?: string;
   assignTab?: 'assignments' | 'leaves' | 'contractor';
-  assignFilter?: 'unassigned' | 'affected';
+  assignFilter?: 'unassigned' | 'affected' | 'pending';
   draft?: AssignmentDraft;
   worklogStatus?: string;
   worklogTaskId?: string;

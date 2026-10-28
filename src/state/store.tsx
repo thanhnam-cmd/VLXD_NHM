@@ -69,6 +69,15 @@ export interface ConflictItem {
   recordId: string;
 }
 
+/** Đủ / thiếu / thừa so với số người khoán */
+export const staffStatusOf = (count: number, workerCount?: number): 'DU' | 'THIEU' | 'THUA' =>
+  !workerCount || count === workerCount ? 'DU' : count > workerCount ? 'THUA' : 'THIEU';
+
+/** Các phần việc giao ngoài đang làm trong ngày của một công việc (theo công việc, hoặc khoán theo dự án) */
+export const activeExternalsFor = (exts: ExternalAssignment[], projectId: string, taskId: string, day: string) =>
+  exts.filter(e => e.status === 'HIEU_LUC' && e.startDate.slice(0, 10) <= day && e.dueDate.slice(0, 10) >= day
+    && (e.taskId ? e.taskId === taskId : e.projectId === projectId));
+
 const ENTITY_LABEL: Record<string, string> = {
   customers: 'khách hàng', staff: 'nhân sự', accounts: 'tài khoản', projects: 'dự án', categories: 'hạng mục', tasks: 'công việc',
   assignments: 'phân công', leaves: 'lịch nghỉ/bận', subcontractors: 'đội thi công ngoài', externalAssignments: 'phần việc giao ngoài',
@@ -884,23 +893,61 @@ const useStoreState = () => {
     return ok('Đã hủy phần việc giao.');
   };
 
-  const upsertDailyStaffing = (extId: string, row: Omit<ExternalDailyStaffing, 'updatedBy' | 'updatedAt'>): OpResult => {
+  const upsertDailyStaffing = (extId: string, row: { date: string; presentCount: number; names?: string; content?: string; status?: 'DU' | 'THIEU' | 'THUA'; managerNote?: string }): OpResult => {
     const e = externalAssignments.find(x => x.id === extId);
     if (!e) return fail('Không tìm thấy phần việc.');
+    if (e.status !== 'HIEU_LUC') return fail('Phần việc giao ngoài đã hủy, không cập nhật nhân sự được.');
     if (!row.date || row.date < e.startDate.slice(0, 10) || row.date > e.dueDate.slice(0, 10)) return fail('Ngày cập nhật phải nằm trong thời gian đội ngoài làm việc.');
     if (row.date > queryTime().slice(0, 10)) return fail('Không thể cập nhật cho ngày chưa đến.');
     if (row.presentCount < 0 || row.presentCount > 200 || isNaN(row.presentCount)) return fail('Số nhân sự có mặt phải từ 0 đến 200.');
     const nameLines = (row.names || '').split('\n').map(x => x.trim()).filter(Boolean);
     if (nameLines.length > row.presentCount) return fail('Số họ tên đã nhập vượt quá số nhân sự có mặt.');
     const existing = (e.dailyStaffing || []).find(d => d.date === row.date);
-    const record: ExternalDailyStaffing = { ...row, names: nameLines.join(', '), updatedBy: actorName(), updatedAt: nowDb() };
+    const isLeadUser = isTeamLeadRole(currentUser);
+    if (isLeadUser && existing?.confirmed) return fail(`Quản lý đã xác nhận nhân sự ngày ${formatDate(row.date)} (${existing.presentCount} người); không sửa được nữa.`);
+    const status = row.status || staffStatusOf(row.presentCount, e.workerCount);
+    const now = nowDb();
+    const record: ExternalDailyStaffing = isLeadUser
+      ? { ...(existing || {}), date: row.date, presentCount: row.presentCount, names: nameLines.join(', ') || existing?.names, content: row.content || existing?.content,
+          updatedBy: actorName(), updatedAt: now, reportedCount: row.presentCount, reportedStatus: status, reportedBy: actorName(), reportedAt: now,
+          reportNote: row.content, confirmed: false }
+      : { ...(existing || {}), date: row.date, presentCount: row.presentCount, names: nameLines.join(', ') || existing?.names, content: row.content || existing?.content,
+          updatedBy: actorName(), updatedAt: now, confirmed: true, confirmedBy: actorName(), confirmedAt: now, managerNote: row.managerNote?.trim() || existing?.managerNote };
     setExternalAssignments(prev => prev.map(x => x.id === extId ? {
       ...x,
       dailyStaffing: [...(x.dailyStaffing || []).filter(d => d.date !== row.date), record].sort((a, b) => a.date.localeCompare(b.date))
     } : x));
-    logAudit(existing ? 'DIEU_CHINH' : 'TAO_MOI', 'Nhân sự đội ngoài theo ngày', `${extId}-${row.date}`, undefined, existing ? { co_mat: existing.presentCount } : null, { co_mat: row.presentCount });
-    return ok(`Đã cập nhật nhân sự triển khai ngày ${formatDate(row.date)}.`);
+    logAudit(existing ? 'DIEU_CHINH' : 'TAO_MOI', 'Nhân sự đội ngoài theo ngày', `${extId}-${row.date}`, isLeadUser ? 'Đội trưởng báo cáo' : 'Quản lý xác nhận',
+      existing ? { co_mat: existing.presentCount, da_xac_nhan: !!existing.confirmed } : null, { co_mat: row.presentCount, da_xac_nhan: !isLeadUser });
+    return ok(isLeadUser
+      ? `Đã gửi nhân sự đội ngoài ngày ${formatDate(row.date)}: ${row.presentCount} người. Chờ Quản lý xác nhận.`
+      : `Đã xác nhận nhân sự đội ngoài ngày ${formatDate(row.date)}: ${row.presentCount} người.`);
   };
+
+  /** Quản lý xác nhận (có thể sửa) số người đội trưởng đã báo, kèm nhận xét */
+  const confirmDailyStaffing = (extId: string, date: string, count: number, managerNote?: string): OpResult => {
+    if (!(isManagerRole(currentUser) || isAdminRole(currentUser))) return fail('Chỉ Quản lý được xác nhận nhân sự đội ngoài.');
+    const e = externalAssignments.find(x => x.id === extId);
+    const d = e && (e.dailyStaffing || []).find(x => x.date === date);
+    if (!e || !d) return fail('Không tìm thấy bản ghi nhân sự ngày này.');
+    if (isNaN(count) || count < 0 || count > 200) return fail('Số nhân sự có mặt phải từ 0 đến 200.');
+    if ((managerNote || '').length > 500) return fail('Nhận xét tối đa 500 ký tự.');
+    const now = nowDb();
+    setExternalAssignments(prev => prev.map(x => x.id === extId ? {
+      ...x, dailyStaffing: (x.dailyStaffing || []).map(r => r.date === date ? {
+        ...r, presentCount: count, confirmed: true, confirmedBy: actorName(), confirmedAt: now, managerNote: managerNote?.trim() || undefined, updatedBy: actorName(), updatedAt: now
+      } : r)
+    } : x));
+    logAudit('XAC_NHAN_HOAN_THANH', 'Nhân sự đội ngoài theo ngày', `${extId}-${date}`, managerNote?.trim() || undefined,
+      { co_mat_doi_truong_bao: d.reportedCount ?? d.presentCount }, { co_mat_xac_nhan: count });
+    return ok(`Đã xác nhận ${count} người của ${e.contractorName} ngày ${formatDate(date)}.`);
+  };
+
+  /** Các ngày đội trưởng đã báo nhưng Quản lý chưa xác nhận (trong phạm vi dự án của người dùng) */
+  const pendingDailyConfirmations = () => externalAssignments
+    .filter(e => visibleProjectIds.has(e.projectId || tasks.find(t => t.id === e.taskId)?.projectId || ''))
+    .flatMap(e => (e.dailyStaffing || []).filter(d => !d.confirmed && d.reportedBy).map(d => ({ ext: e, day: d })))
+    .sort((a, b) => b.day.date.localeCompare(a.day.date));
 
   // ---------- Nhật ký hiện trường (MH-12, MH-18) ----------
   const addWorkLog = (data: Omit<WorkLog, 'id' | 'submittedAt'>): OpResult => {
@@ -926,29 +973,45 @@ const useStoreState = () => {
       recordedByManager: isManagerRole(currentUser) || isAdminRole(currentUser),
       statusVerifiedByManager: false
     };
-    if (data.externalTeamId) {
-      const day = queryTime().slice(0, 10);
-      const open = externalAssignments.filter(e => e.status === 'HIEU_LUC' && e.contractorId === data.externalTeamId
-        && (e.projectId || tasks.find(x => x.id === e.taskId)?.projectId) === data.projectId
-        && e.startDate.slice(0, 10) <= day && e.dueDate.slice(0, 10) >= day);
-      const target = open.find(e => e.id === data.externalAssignmentId) || open.find(e => e.taskId === data.taskId) || open.find(e => !e.taskId) || open[0];
-      if (target) {
-        created.externalAssignmentId = created.externalAssignmentId || target.id;
-        const count = data.externalTeamCount ?? (data.externalStaffingStatus === 'DU' || data.externalStaffingStatus === 'THUA' ? target.workerCount : undefined);
-        if (count !== undefined) {
-          const old = (target.dailyStaffing || []).find(d => d.date === day);
-          const record: ExternalDailyStaffing = {
-            date: day, presentCount: count, names: old?.names,
-            content: (data.externalTeamNote || data.content).slice(0, 300), updatedBy: actorName(), updatedAt: nowDb()
-          };
-          setExternalAssignments(prev => prev.map(x => x.id === target.id ? {
-            ...x, dailyStaffing: [...(x.dailyStaffing || []).filter(d => d.date !== day), record].sort((a, b) => a.date.localeCompare(b.date))
-          } : x));
-        }
-      }
+    const day = queryTime().slice(0, 10);
+    const reports = (data.externalReports || []).filter(r => r.assignmentId);
+    for (const r of reports) {
+      if (isNaN(r.count) || r.count < 0 || r.count > 200) return fail(`Số người có mặt của ${r.contractorName || 'đội ngoài'} phải từ 0 đến 200.`);
+    }
+    const skipped: string[] = [];
+    if (reports.length > 0) {
+      const byManager = isManagerRole(currentUser) || isAdminRole(currentUser);
+      const now = nowDb();
+      if (!byManager) externalAssignments.forEach(x => {
+        if (reports.some(y => y.assignmentId === x.id) && (x.dailyStaffing || []).some(d => d.date === day && d.confirmed)) skipped.push(x.contractorName);
+      });
+      setExternalAssignments(prev => prev.map(x => {
+        const r = reports.find(y => y.assignmentId === x.id);
+        if (!r || x.status !== 'HIEU_LUC' || day < x.startDate.slice(0, 10) || day > x.dueDate.slice(0, 10)) return x;
+        const old = (x.dailyStaffing || []).find(d => d.date === day);
+        if (old?.confirmed && !byManager) return x;
+        const rec: ExternalDailyStaffing = byManager
+          ? { ...(old || {}), date: day, presentCount: r.count, content: r.note || old?.content || data.content.slice(0, 300), updatedBy: actorName(), updatedAt: now,
+              confirmed: true, confirmedBy: actorName(), confirmedAt: now, managerNote: r.note || old?.managerNote }
+          : { ...(old || {}), date: day, presentCount: r.count, content: r.note || data.content.slice(0, 300), updatedBy: actorName(), updatedAt: now,
+              reportedCount: r.count, reportedStatus: r.status, reportedBy: actorName(), reportedAt: now, reportNote: r.note, confirmed: false };
+        return { ...x, dailyStaffing: [...(x.dailyStaffing || []).filter(d => d.date !== day), rec].sort((a, b) => a.date.localeCompare(b.date)) };
+      }));
+      // Giữ các trường cũ (đội đầu tiên) để hiển thị và tương thích báo cáo
+      const first = reports[0];
+      created.externalReports = reports;
+      created.externalAssignmentId = created.externalAssignmentId || first.assignmentId;
+      created.externalTeamId = first.contractorId;
+      created.externalTeamCount = first.count;
+      created.externalStaffingStatus = first.status;
+      created.externalTeamNote = first.note;
+    } else if (data.externalTeamId) {
+      // Đội ngoài không nằm trong phân công hôm nay: chỉ lưu ghi chú trên nhật ký
+      created.externalReports = undefined;
     }
     setWorkLogs(prev => [created, ...prev]);
-    return ok(created.recordedByManager && !data.correctionForLogId ? `Đã ghi nhận kết quả cho công việc ${t.title}.` : 'Đã gửi báo cáo hiện trường.');
+    const base = created.recordedByManager && !data.correctionForLogId ? `Đã ghi nhận kết quả cho công việc ${t.title}.` : 'Đã gửi báo cáo hiện trường.';
+    return ok(skipped.length ? `${base} Nhân sự hôm nay của ${skipped.join(', ')} đã được Quản lý xác nhận nên không thay đổi.` : base);
   };
 
   const approveWorkLog = (logId: string, note?: string): OpResult => {
@@ -1250,7 +1313,7 @@ const useStoreState = () => {
     uploadDocs, addDocVersion, selectDocVersion, updateDocInfo,
     saveStaff,
     createAccount, updateAccount, resetPassword, setAccountLock, updateAccountScope, recordLogin, markPasswordChanged,
-    saveConfig, setQueryTime, addLogComment
+    saveConfig, setQueryTime, addLogComment, confirmDailyStaffing, pendingDailyConfirmations
   };
 };
 

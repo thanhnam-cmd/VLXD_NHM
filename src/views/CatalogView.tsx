@@ -158,12 +158,21 @@ export const CatalogView: React.FC<{ kind: CatalogKind; onOpenProject: (id: stri
         };
       });
   } else if (kind === 'cat_teams') {
-    head = ['Mã', 'Tên tổ đội', 'Loại', 'Mô tả', 'Số nhân sự'];
-    rows = teams.filter(t => match(t.code, t.name)).map(t => ({
-      key: t.id,
-      cells: [<span className="font-mono font-bold">{t.code}</span>, <strong>{t.name}</strong>, t.kind === 'THIET_KE' ? 'Tổ thiết kế' : 'Đội thi công', t.description || '—', staff.filter(s => s.teamId === t.id && s.isActive).length],
-      onEdit: () => setSimpleModal({ item: t })
-    }));
+    head = ['Mã', 'Tên tổ đội', 'Loại', 'Đội trưởng', 'Mô tả', 'Số nhân sự'];
+    rows = teams.filter(t => match(t.code, t.name))
+      .sort((a, b) => a.code.localeCompare(b.code, 'vi', { numeric: true }))
+      .map(t => {
+        const leader = staff.find(s => s.teamId === t.id && s.isActive && s.roleTitle === 'DOI_TRUONG');
+        return {
+          key: t.id,
+          cells: [<span className="font-mono font-bold">{t.code}</span>, <strong>{t.name}</strong>, t.kind === 'THIET_KE' ? 'Tổ thiết kế' : 'Đội thi công',
+            leader ? <span className="font-semibold">{leader.name}</span>
+              : t.kind === 'THIET_KE' ? <span className="text-slate-400">—</span>
+              : <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 font-bold" title="Gán chức danh Đội trưởng cho một nhân sự của tổ ở Danh mục nhân sự để giao việc theo tổ">Chưa có đội trưởng</span>,
+            t.description || '—', staff.filter(s => s.teamId === t.id && s.isActive).length],
+          onEdit: () => setSimpleModal({ item: t })
+        };
+      });
   } else if (kind === 'cat_skills') {
     head = ['Mã', 'Tên chuyên môn', 'Mô tả', 'Số nhân sự có chuyên môn'];
     rows = skills.filter(s => match(s.code, s.name)).map(s => ({

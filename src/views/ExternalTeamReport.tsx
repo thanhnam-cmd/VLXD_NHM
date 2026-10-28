@@ -32,16 +32,23 @@ export const staffingByDay = (e: ExternalAssignment, workLogs: WorkLog[], from?:
   const s = [e.startDate.slice(0, 10), from || ''].sort().pop()!;
   const end = [e.dueDate.slice(0, 10), to || '9999-12-31', today].sort()[0];
   const notes = workLogs.filter(w => w.externalStaffingStatus && w.externalTeamId === e.contractorId
-    && (w.externalAssignmentId === e.id || (e.taskId ? w.taskId === e.taskId : w.projectId === e.projectId)));
+    && (w.externalAssignmentId ? w.externalAssignmentId === e.id : (e.taskId ? w.taskId === e.taskId : w.projectId === e.projectId)));
   return (s > end ? [] : daysIn(s, end)).map(date => {
     const rec = (e.dailyStaffing || []).find(d => d.date === date);
     const note = notes.filter(w => w.submittedAt.slice(0, 10) === date).sort((a, b) => b.submittedAt.localeCompare(a.submittedAt))[0];
     const count = rec ? rec.presentCount : note?.externalTeamCount;
     let status: DayStatus = 'CHUA';
+    // Đã xác nhận: số của Quản lý quyết định; chưa xác nhận: theo đội trưởng báo
+    const confirmed = !!rec?.confirmed;
+    const reportedStatus = rec?.reportedStatus || note?.externalStaffingStatus;
     if (count === 0) status = 'NGHI';
-    else if (note?.externalStaffingStatus) status = note.externalStaffingStatus as DayStatus;
+    else if (!confirmed && reportedStatus) status = reportedStatus as DayStatus;
     else if (count !== undefined) status = !e.workerCount || count === e.workerCount ? 'DU' : count > e.workerCount ? 'THUA' : 'THIEU';
-    return { date, count, status, content: rec?.content || note?.externalTeamNote || '', by: rec?.updatedBy || note?.submittedByStaffName || '' };
+    return {
+      date, count, status, confirmed: count !== undefined && confirmed, pending: count !== undefined && !confirmed,
+      content: rec?.reportNote || rec?.content || note?.externalTeamNote || '', managerNote: rec?.managerNote || '',
+      by: rec?.confirmedBy || rec?.reportedBy || rec?.updatedBy || note?.submittedByStaffName || ''
+    };
   });
 };
 
@@ -50,7 +57,8 @@ export const summarizeDays = (days: ReturnType<typeof staffingByDay>) => {
   const thieu = days.filter(d => d.status === 'THIEU').length;
   const updated = days.filter(d => d.status !== 'CHUA').length;
   const manDays = days.reduce((s, d) => s + (d.count || 0), 0);
-  return { du, thieu, updated, total: days.length, manDays, rate: du + thieu > 0 ? Math.round((du / (du + thieu)) * 100) : null };
+  const pending = days.filter(d => d.pending).length;
+  return { du, thieu, updated, pending, total: days.length, manDays, rate: du + thieu > 0 ? Math.round((du / (du + thieu)) * 100) : null };
 };
 
 const assessment = (rate: number | null) =>
@@ -128,7 +136,7 @@ export const ExternalTeamReport: React.FC<{ onSelectProject?: (projectId: string
           <StatCard label="Phần việc giao khoán" value={rows.length} unit="phần việc" tone="navy" />
           <StatCard label="Đang triển khai" value={rows.filter(r => r.st.key === 'DANG').length} unit="phần việc" tone="blue" />
           <StatCard label="Chưa cập nhật hôm nay" value={notToday} unit="phần việc" tone="amber" />
-          <StatCard label="Ngày đã cập nhật" value={totDays ? `${totUpd}/${totDays}` : null} unit="ngày" tone="purple" />
+          <StatCard label="Ngày đã cập nhật" value={totDays ? `${totUpd}/${totDays}` : null} unit="ngày" tone="purple" hint={tot(r => r.sum.pending) ? `${tot(r => r.sum.pending)} ngày chờ Quản lý xác nhận` : 'Đã xác nhận đủ'} />
           <StatCard label="Tổng công (người × ngày)" value={tot(r => r.sum.manDays)} unit="công" tone="slate" />
           <StatCard label="Tỷ lệ ngày đủ nhân sự" value={totRate === null ? null : `${totRate}%`} tone={totRate !== null && totRate < 70 ? 'red' : 'green'} hint={totRate === null ? undefined : `${totDu} ngày đủ · ${totThieu} ngày thiếu`} />
         </div>
@@ -187,8 +195,8 @@ export const ExternalTeamReport: React.FC<{ onSelectProject?: (projectId: string
                       {dates.map(d => {
                         const day = r.days.find(x => x.date === d);
                         return (
-                          <td key={d} className={`${tdCls} text-center p-1`} title={day ? `${DAY_LABEL[day.status]}${day.content ? ' · ' + day.content : ''}${day.by ? ' · ' + day.by : ''}` : 'Ngoài thời gian làm việc'}>
-                            {day ? <span className={`inline-block min-w-[30px] px-1 py-0.5 rounded font-mono font-bold ${DAY_CLS[day.status]}`}>{day.status === 'CHUA' ? '?' : day.count}</span> : <span className="text-slate-300">·</span>}
+                          <td key={d} className={`${tdCls} text-center p-1`} title={day ? `${DAY_LABEL[day.status]}${day.pending ? ' · CHỜ QUẢN LÝ XÁC NHẬN' : day.confirmed ? ' · đã xác nhận' : ''}${day.content ? ' · ' + day.content : ''}${day.managerNote ? ' · QL: ' + day.managerNote : ''}${day.by ? ' · ' + day.by : ''}` : 'Ngoài thời gian làm việc'}>
+                            {day ? <span className={`inline-block min-w-[30px] px-1 py-0.5 rounded font-mono font-bold ${DAY_CLS[day.status]} ${day.pending ? 'outline-2 outline-dashed outline-amber-500' : ''}`}>{day.status === 'CHUA' ? '?' : day.count}</span> : <span className="text-slate-300">·</span>}
                           </td>
                         );
                       })}
@@ -245,7 +253,7 @@ export const ExternalTeamReport: React.FC<{ onSelectProject?: (projectId: string
             head: ['Đơn vị · Phần việc', 'Khoán', ...dates.map(d => `${wd(d)} ${d.slice(8, 10)}/${d.slice(5, 7)}`), 'Công'],
             align: ['l', 'c', ...dates.map(() => 'c' as const), 'c'],
             widths: [dates.length > 10 ? '16%' : '26%', '4%'],
-            rows: rows.map(r => [`${r.e.contractorName} · ${r.p?.code} ${work(r)}`, r.e.workerCount ?? '—', ...dates.map(d => { const day = r.days.find(x => x.date === d); return !day ? '' : day.status === 'CHUA' ? '?' : day.status === 'THIEU' ? `${day.count}*` : day.count ?? ''; }), r.sum.manDays]),
+            rows: rows.map(r => [`${r.e.contractorName} · ${r.p?.code} ${work(r)}`, r.e.workerCount ?? '—', ...dates.map(d => { const day = r.days.find(x => x.date === d); return !day ? '' : day.status === 'CHUA' ? '?' : `${day.count ?? ''}${day.status === 'THIEU' ? '*' : ''}${day.pending ? '~' : ''}`; }), r.sum.manDays]),
             foot: ['Tổng cộng', tot(r => r.e.workerCount || 0), ...dates.map(d => rows.reduce((s, r) => s + (r.days.find(x => x.date === d)?.count || 0), 0) || ''), tot(r => r.sum.manDays)]
           },
           {
@@ -257,7 +265,7 @@ export const ExternalTeamReport: React.FC<{ onSelectProject?: (projectId: string
         ]}
         notes={[
           'Số người có mặt lấy từ bảng nhân sự đội ngoài theo ngày do Đội trưởng/Quản lý cập nhật (kể cả ghi chú đội ngoài trong nhật ký hiện trường).',
-          'Đủ/Thiếu: theo ghi chú của Đội trưởng; nếu không có thì so số người có mặt với quy mô khoán. Dấu * là ngày thiếu nhân sự, "?" là ngày chưa cập nhật, 0 là ngày nghỉ.',
+          'Số người: số Quản lý đã xác nhận; ngày chưa xác nhận tạm lấy số Đội trưởng báo và đánh dấu "~". Dấu * là ngày thiếu nhân sự, "?" là ngày chưa cập nhật, 0 là ngày nghỉ.',
           'Công = tổng số người có mặt của các ngày trong kỳ (người × ngày), dùng làm căn cứ trả công theo ngày hoặc theo tuần.',
           'Giá trị khoán chỉ để tham khảo, hệ thống không hạch toán thanh toán.'
         ]} />

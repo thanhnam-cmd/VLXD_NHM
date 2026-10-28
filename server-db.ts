@@ -123,6 +123,17 @@ export async function ensureSchemaExtensions(pool: pg.Pool) {
     );
     CREATE TABLE IF NOT EXISTS phien_ban_du_lieu (id INT PRIMARY KEY, so INT NOT NULL DEFAULT 0, thoi_diem TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
     INSERT INTO phien_ban_du_lieu (id, so) VALUES (1, 0) ON CONFLICT DO NOTHING;
+    -- Đội khoán ngoài: đội trưởng báo số người/đủ-thiếu, Quản lý xác nhận số chính thức kèm nhận xét
+    ALTER TABLE nhan_su_ngoai_theo_ngay ADD COLUMN IF NOT EXISTS so_nguoi_bao_cao INT;
+    ALTER TABLE nhan_su_ngoai_theo_ngay ADD COLUMN IF NOT EXISTS tinh_trang_bao_cao VARCHAR(10);
+    ALTER TABLE nhan_su_ngoai_theo_ngay ADD COLUMN IF NOT EXISTS nguoi_bao_cao VARCHAR(150);
+    ALTER TABLE nhan_su_ngoai_theo_ngay ADD COLUMN IF NOT EXISTS thoi_diem_bao_cao TIMESTAMP;
+    ALTER TABLE nhan_su_ngoai_theo_ngay ADD COLUMN IF NOT EXISTS ghi_chu_bao_cao TEXT;
+    ALTER TABLE nhan_su_ngoai_theo_ngay ADD COLUMN IF NOT EXISTS da_xac_nhan INT DEFAULT 0;
+    ALTER TABLE nhan_su_ngoai_theo_ngay ADD COLUMN IF NOT EXISTS nguoi_xac_nhan VARCHAR(150);
+    ALTER TABLE nhan_su_ngoai_theo_ngay ADD COLUMN IF NOT EXISTS thoi_diem_xac_nhan TIMESTAMP;
+    ALTER TABLE nhan_su_ngoai_theo_ngay ADD COLUMN IF NOT EXISTS nhan_xet_quan_ly TEXT;
+    ALTER TABLE cap_nhat_ket_qua ADD COLUMN IF NOT EXISTS bao_cao_doi_ngoai TEXT;
     ALTER TABLE phan_cong_ben_ngoai ADD COLUMN IF NOT EXISTS du_an_id INT REFERENCES du_an(id);
     ALTER TABLE phan_cong_ben_ngoai ALTER COLUMN cong_viec_id DROP NOT NULL;
     UPDATE phan_cong_ben_ngoai e SET du_an_id = cv.du_an_id FROM cong_viec cv WHERE e.cong_viec_id = cv.id AND e.du_an_id IS NULL;
@@ -143,6 +154,11 @@ export async function ensureSchemaExtensions(pool: pg.Pool) {
     await run();
     await pool.query(`INSERT INTO moc_nang_cap (khoa) VALUES ($1) ON CONFLICT DO NOTHING`, [key]);
   };
+  // Số liệu nhân sự đội ngoài nhập trước khi có bước xác nhận được coi là đã chốt
+  await once('NHAN_SU_NGOAI_DA_CHOT_CU', async () => {
+    await pool.query(`UPDATE nhan_su_ngoai_theo_ngay SET da_xac_nhan = 1, nguoi_xac_nhan = COALESCE(nguoi_xac_nhan, nguoi_cap_nhat),
+      thoi_diem_xac_nhan = COALESCE(thoi_diem_xac_nhan, thoi_diem_cap_nhat) WHERE COALESCE(da_xac_nhan, 0) = 0`);
+  });
   // Thời điểm tra cứu mặc định theo giờ máy (trước đây cố định 12/10/2026 09:00)
   await once('GIO_TRA_CUU_THEO_MAY', async () => {
     await pool.query(`UPDATE cau_hinh SET gia_tri = '', thoi_diem_cap_nhat = CURRENT_TIMESTAMP WHERE khoa_cau_hinh = 'THOI_DIEM_TRA_CUU'`);
@@ -310,7 +326,7 @@ export async function bootstrap(pool: pg.Pool) {
       c.de_nghi_hoan_thanh AS de_nghi, c.cap_nhat_dinh_chinh_id::text AS "correctionForLogId",
       c.phan_cong_ben_ngoai_id::text AS "externalAssignmentId", cv.trang_thai AS task_status,
       c.doi_ben_ngoai_id::text AS "externalTeamId", c.so_nguoi_doi_ngoai AS "externalTeamCount",
-      c.tinh_trang_nhan_su_ngoai AS "externalStaffingStatus", c.ghi_chu_doi_ngoai AS "externalTeamNote"
+      c.tinh_trang_nhan_su_ngoai AS "externalStaffingStatus", c.ghi_chu_doi_ngoai AS "externalTeamNote", c.bao_cao_doi_ngoai AS "externalReports"
     FROM cap_nhat_ket_qua c JOIN cong_viec cv ON c.cong_viec_id = cv.id
     LEFT JOIN tai_khoan tk ON c.tai_khoan_gui_id = tk.id LEFT JOIN vai_tro vt ON tk.vai_tro_id = vt.id
     LEFT JOIN nhan_su ns ON tk.nhan_su_id = ns.id ORDER BY c.thoi_diem_ghi_nhan DESC`);
@@ -330,6 +346,7 @@ export async function bootstrap(pool: pg.Pool) {
     recordedByManager: l.role === 'QUAN_LY' || l.role === 'QUAN_TRI',
     externalTeamId: l.externalTeamId || undefined, externalTeamCount: l.externalTeamCount ?? undefined,
     externalStaffingStatus: l.externalStaffingStatus || undefined, externalTeamNote: l.externalTeamNote || undefined,
+    externalReports: (() => { try { return l.externalReports ? JSON.parse(l.externalReports) : undefined; } catch { return undefined; } })(),
     photos: files.filter(f => f.lid === l.id).map(f => {
       const p = String(f.path || '');
       return { name: f.name, size: Number(f.size) || undefined, url: p.startsWith('/api/files/') ? p : undefined, dataUrl: p.startsWith('data:') ? p : undefined };
@@ -375,12 +392,15 @@ export async function bootstrap(pool: pg.Pool) {
     ORDER BY e.id`);
   const daily = await q(`
     SELECT phan_cong_ben_ngoai_id::text AS eid, TO_CHAR(ngay, 'YYYY-MM-DD') AS date, so_co_mat AS "presentCount", ho_ten AS names,
-      noi_dung AS content, nguoi_cap_nhat AS "updatedBy", ${TS('thoi_diem_cap_nhat')} AS "updatedAt"
+      noi_dung AS content, nguoi_cap_nhat AS "updatedBy", ${TS('thoi_diem_cap_nhat')} AS "updatedAt",
+      so_nguoi_bao_cao AS "reportedCount", tinh_trang_bao_cao AS "reportedStatus", nguoi_bao_cao AS "reportedBy",
+      ${TS('thoi_diem_bao_cao')} AS "reportedAt", ghi_chu_bao_cao AS "reportNote", COALESCE(da_xac_nhan, 0) = 1 AS confirmed,
+      nguoi_xac_nhan AS "confirmedBy", ${TS('thoi_diem_xac_nhan')} AS "confirmedAt", nhan_xet_quan_ly AS "managerNote"
     FROM nhan_su_ngoai_theo_ngay ORDER BY ngay`);
   const externalAssignments = extRaw.map(e => ({
     ...e,
     contractValue: e.contractValue ? Number(e.contractValue) : undefined,
-    dailyStaffing: daily.filter(d => d.eid === e.id).map(({ eid, ...rest }) => rest)
+    dailyStaffing: daily.filter(d => d.eid === e.id).map(({ eid, ...rest }) => Object.fromEntries(Object.entries(rest).filter(([, v]) => v !== null)))
   }));
 
   const auditLogs = (await q(`
@@ -614,7 +634,10 @@ export async function syncEntity(pool: pg.Pool, entity: string, rows: Row[], act
           for (const d of r.dailyStaffing || []) {
             await upsert(client, 'nhan_su_ngoai_theo_ngay', ['phan_cong_ben_ngoai_id', 'ngay'], {
               phan_cong_ben_ngoai_id: toInt(r.id), ngay: d.date, so_co_mat: d.presentCount, ho_ten: str(d.names),
-              noi_dung: str(d.content), nguoi_cap_nhat: str(d.updatedBy), thoi_diem_cap_nhat: toTs(d.updatedAt)
+              noi_dung: str(d.content), nguoi_cap_nhat: str(d.updatedBy), thoi_diem_cap_nhat: toTs(d.updatedAt),
+              so_nguoi_bao_cao: d.reportedCount ?? null, tinh_trang_bao_cao: str(d.reportedStatus), nguoi_bao_cao: str(d.reportedBy),
+              thoi_diem_bao_cao: toTs(d.reportedAt), ghi_chu_bao_cao: str(d.reportNote), da_xac_nhan: d.confirmed ? 1 : 0,
+              nguoi_xac_nhan: str(d.confirmedBy), thoi_diem_xac_nhan: toTs(d.confirmedAt), nhan_xet_quan_ly: str(d.managerNote)
             });
           }
           break;
@@ -627,7 +650,8 @@ export async function syncEntity(pool: pg.Pool, entity: string, rows: Row[], act
             thoi_diem_ghi_nhan: toTs(r.submittedAt), noi_dung: r.content, kho_khan: str(r.issuesFaced),
             de_nghi_hoan_thanh: r.requestApproval ? 1 : 0, cap_nhat_dinh_chinh_id: toInt(r.correctionForLogId),
             doi_ben_ngoai_id: toInt(r.externalTeamId), so_nguoi_doi_ngoai: toInt(r.externalTeamCount),
-            tinh_trang_nhan_su_ngoai: str(r.externalStaffingStatus), ghi_chu_doi_ngoai: str(r.externalTeamNote)
+            tinh_trang_nhan_su_ngoai: str(r.externalStaffingStatus), ghi_chu_doi_ngoai: str(r.externalTeamNote),
+            bao_cao_doi_ngoai: Array.isArray(r.externalReports) && r.externalReports.length ? JSON.stringify(r.externalReports) : null
           });
           const exists = (await client.query(`SELECT COUNT(*)::int AS n FROM tep_minh_chung WHERE cap_nhat_id = $1`, [toInt(r.id)])).rows[0].n;
           if (exists === 0) {
@@ -636,16 +660,18 @@ export async function syncEntity(pool: pg.Pool, entity: string, rows: Row[], act
               let pathStored = p.url || `minh_chung/${r.id}/${p.name}`;
               let mime = /\.png$/i.test(p.name) ? 'image/png' : 'image/jpeg';
               let size = p.size ?? null;
+              let sha = crypto.createHash('sha256').update(String(pathStored)).digest('hex');
               const m = typeof p.dataUrl === 'string' ? p.dataUrl.match(/^data:([^;,]+);base64,(.*)$/s) : null;
               if (m) {
                 const buf = Buffer.from(m[2], 'base64');
                 mime = m[1]; size = buf.length;
+                sha = crypto.createHash('sha256').update(buf).digest('hex');
                 const fid = (await client.query(`INSERT INTO tep_du_lieu (ten_tep_goc, kieu_noi_dung, dung_luong_byte, du_lieu) VALUES ($1, $2, $3, $4) RETURNING id`, [p.name, mime, buf.length, buf])).rows[0].id;
                 pathStored = `/api/files/${fid}`;
               }
               const next = (await client.query(`SELECT COALESCE(MAX(id), 0) + 1 AS id FROM tep_minh_chung`)).rows[0].id;
-              await client.query(`INSERT INTO tep_minh_chung (id, cap_nhat_id, ten_tep_goc, duong_dan_luu, kieu_noi_dung, dung_luong_byte) VALUES ($1, $2, $3, $4, $5, $6)`,
-                [next, toInt(r.id), p.name, pathStored, mime, size]);
+              await client.query(`INSERT INTO tep_minh_chung (id, cap_nhat_id, ten_tep_goc, duong_dan_luu, kieu_noi_dung, dung_luong_byte, ma_bam_sha256) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+                [next, toInt(r.id), p.name, pathStored, mime, size, sha]);
             }
           }
           for (const c of r.comments || []) {
@@ -663,7 +689,13 @@ export async function syncEntity(pool: pg.Pool, entity: string, rows: Row[], act
           }, { nguoi_tao_id: acc.byName(r.uploadedBy) ?? actorId });
           for (const v of r.versions || []) {
             const found = (await client.query(`SELECT id FROM phien_ban_ho_so WHERE ho_so_id = $1 AND so_phien_ban = $2`, [toInt(r.id), v.versionNum])).rows[0];
-            const vals = [v.label || '', v.originalFileName, v.storedPath || v.originalFileName, v.fileType, v.fileSizeByte ?? null, str(v.sha256),
+            let sha = str(v.sha256);
+            if (!sha) {
+              const fm = String(v.storedPath || '').match(/^\/api\/files\/(\d+)$/);
+              const bytes = fm ? (await client.query(`SELECT du_lieu FROM tep_du_lieu WHERE id = $1`, [parseInt(fm[1], 10)])).rows[0]?.du_lieu : null;
+              sha = crypto.createHash('sha256').update(bytes || String(v.storedPath || v.originalFileName)).digest('hex');
+            }
+            const vals = [v.label || '', v.originalFileName, v.storedPath || v.originalFileName, v.fileType, v.fileSizeByte ?? null, sha,
               str(v.changeNotes), acc.byName(v.uploadedBy) ?? actorId, toTs(v.uploadedAt), v.isSelectedForExecution ? 1 : 0, acc.byName(v.selectedBy), toTs(v.selectedAt)];
             if (found) {
               await client.query(`UPDATE phien_ban_ho_so SET nhan_phien_ban=$1, ten_tep_goc=$2, duong_dan_luu=$3, loai_tep=$4, dung_luong_byte=$5, ma_bam_sha256=$6,

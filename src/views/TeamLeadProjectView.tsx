@@ -9,6 +9,7 @@ import { displayVersion, canPreview, NO_PREVIEW_MSG } from '../components/DocDia
 import { DailyStaffingModal, staffingProgress } from './ExternalTeamsTab.tsx';
 import { ChevronLeft, MapPin, Calendar, User, Send, Building2 } from 'lucide-react';
 import { taskApprovalNote } from '../components/WorkLogDialogs.tsx';
+import { DayConfirmBadge, STAFF_STATUS_LABEL } from '../components/ExternalDailyDialogs.tsx';
 
 const addDays = (ymd: string, n: number) => {
   const d = new Date(ymd + 'T00:00:00');
@@ -225,13 +226,18 @@ export const TeamLeadProjectView: React.FC<Props> = ({ projectId, onBack, onSend
                     <div className="font-bold text-slate-900">{e.contractorName} <span className="font-normal text-slate-500">· {t ? `${t.code} ${t.title}` : 'Khoán theo dự án'} · {e.workerCount ?? '—'} người</span></div>
                     <div className="text-slate-500">Đầu mối: {sub?.contactPerson} · {sub?.phone} · <span className="font-mono">{formatDate(e.startDate)} – {formatDate(e.dueDate)}</span> · Đã cập nhật {prog.x}/{prog.y} ngày</div>
                   </div>
-                  <button type="button" onClick={() => setDailyFor(e.id)} className="px-3 py-1.5 rounded-lg bg-[#152A55] text-white font-semibold cursor-pointer">Cập nhật nhân sự trong ngày</button>
+                  <button type="button" onClick={() => setDailyFor(e.id)} className="px-3 py-1.5 rounded-lg bg-[#152A55] text-white font-semibold cursor-pointer">Báo nhân sự hôm nay</button>
                 </div>
                 <table className="w-full text-left">
-                  <thead className="text-[10px] uppercase text-slate-500 border-b border-slate-200"><tr><th className="py-1.5">Ngày</th><th>Có mặt</th><th>Nội dung triển khai</th></tr></thead>
+                  <thead className="text-[10px] uppercase text-slate-500 border-b border-slate-200"><tr><th className="py-1.5">Ngày</th><th>Đã báo</th><th>Xác nhận của Quản lý</th><th>Nội dung</th></tr></thead>
                   <tbody className="divide-y divide-slate-100">
-                    {recent.length === 0 ? <tr><td colSpan={3} className="py-2 text-slate-400">Chưa có bản ghi.</td></tr> : recent.map(r => (
-                      <tr key={r.date}><td className="py-1.5 font-mono">{formatDate(r.date)}</td><td className="font-bold">{r.presentCount}</td><td>{r.content || '—'}</td></tr>
+                    {recent.length === 0 ? <tr><td colSpan={4} className="py-2 text-slate-400">Chưa có bản ghi.</td></tr> : recent.map(r => (
+                      <tr key={r.date}>
+                        <td className="py-1.5 font-mono">{formatDate(r.date)}</td>
+                        <td className="font-bold">{r.reportedCount ?? r.presentCount}{r.reportedStatus && <span className={`ml-1 text-[10px] px-1.5 py-0.5 rounded font-bold ${STAFF_STATUS_LABEL[r.reportedStatus]?.cls}`}>{STAFF_STATUS_LABEL[r.reportedStatus]?.label}</span>}</td>
+                        <td><DayConfirmBadge d={r} />{r.confirmed && <span className="ml-1 font-bold">{r.presentCount} người</span>}{r.managerNote && <div className="text-[11px] text-emerald-800">{r.managerNote}</div>}</td>
+                        <td>{r.reportNote || r.content || '—'}</td>
+                      </tr>
                     ))}
                   </tbody>
                 </table>

@@ -179,6 +179,11 @@ export interface ExternalSubcontractor {
   assignedTaskCount?: number;
 }
 
+/**
+ * Nhân sự đội khoán ngoài theo ngày.
+ * Đội trưởng báo số người, đủ/thiếu (reported*) → Quản lý xác nhận số chính thức kèm nhận xét (confirmed*).
+ * presentCount là số dùng cho báo cáo: số Quản lý đã chốt, hoặc tạm lấy số đội trưởng báo khi chưa chốt.
+ */
 export interface ExternalDailyStaffing {
   date: string; // YYYY-MM-DD
   presentCount: number;
@@ -186,6 +191,26 @@ export interface ExternalDailyStaffing {
   content?: string;
   updatedBy: string;
   updatedAt: string;
+  reportedCount?: number;
+  reportedStatus?: 'DU' | 'THIEU' | 'THUA';
+  reportedBy?: string;
+  reportedAt?: string;
+  reportNote?: string;
+  confirmed?: boolean;
+  confirmedBy?: string;
+  confirmedAt?: string;
+  managerNote?: string;
+}
+
+/** Báo cáo nhân sự đội khoán ngoài gửi kèm nhật ký hiện trường (mỗi phần việc một dòng) */
+export interface ExternalReportItem {
+  assignmentId: string;
+  contractorId: string;
+  contractorName?: string;
+  workerCount?: number;
+  count: number;
+  status: 'DU' | 'THIEU' | 'THUA';
+  note?: string;
 }
 
 export interface ExternalAssignment {
@@ -314,6 +339,7 @@ export interface WorkLog {
   externalTeamCount?: number;
   externalStaffingStatus?: 'DU' | 'THIEU' | 'THUA';
   externalTeamNote?: string;
+  externalReports?: ExternalReportItem[];
   proofFile?: {
     originalName: string;
     filePath: string;
