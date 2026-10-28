@@ -88,7 +88,8 @@ export const ExternalTeamReport: React.FC<{ onSelectProject?: (projectId: string
     if (k === 'month') { const d = new Date(today + 'T00:00:00'); setFrom(ymd(new Date(d.getFullYear(), d.getMonth(), 1))); setTo(ymd(new Date(d.getFullYear(), d.getMonth() + 1, 0))); }
   };
 
-  const rows = rangeErr ? [] : scoped.externalAssignments.map(e => {
+  // Khoán theo dự án chỉ để theo dõi: nhân sự theo ngày tính theo phần việc giao của công việc (tránh đếm trùng một đội)
+  const rows = rangeErr ? [] : scoped.externalAssignments.filter(e => !!e.taskId).map(e => {
     const t = tasks.find(x => x.id === e.taskId);
     const p = visibleProjects.find(x => x.id === (e.projectId || t?.projectId));
     const days = staffingByDay(e, workLogs, from, to);

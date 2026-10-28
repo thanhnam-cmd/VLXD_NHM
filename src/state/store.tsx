@@ -73,12 +73,12 @@ export interface ConflictItem {
 export const staffStatusOf = (count: number, workerCount?: number): 'DU' | 'THIEU' | 'THUA' =>
   !workerCount || count === workerCount ? 'DU' : count > workerCount ? 'THUA' : 'THIEU';
 
-/** Các phần việc giao ngoài đang làm trong ngày của một công việc (theo công việc, hoặc khoán theo dự án) */
-export const activeExternalsFor = (exts: ExternalAssignment[], projectId: string, taskId: string, day: string) => {
-  const list = exts.filter(e => e.status === 'HIEU_LUC' && e.startDate.slice(0, 10) <= day && e.dueDate.slice(0, 10) >= day
-    && (e.taskId ? e.taskId === taskId : e.projectId === projectId))
-    .sort((a, b) => (a.taskId ? 0 : 1) - (b.taskId ? 0 : 1));
-  // Mỗi đội chỉ báo một lần cho công việc: có phần việc theo công việc thì không lặp lại phần khoán theo dự án
+/**
+ * Các phần việc giao ngoài đang làm trong ngày của một công việc.
+ * Chỉ phần việc theo công việc: khoán theo dự án chỉ để theo dõi đội nào, bao nhiêu người, không báo nhân sự theo ngày.
+ */
+export const activeExternalsFor = (exts: ExternalAssignment[], _projectId: string, taskId: string, day: string) => {
+  const list = exts.filter(e => e.status === 'HIEU_LUC' && !!e.taskId && e.taskId === taskId && e.startDate.slice(0, 10) <= day && e.dueDate.slice(0, 10) >= day);
   return list.filter((e, i) => list.findIndex(x => x.contractorId === e.contractorId) === i);
 };
 
@@ -893,6 +893,9 @@ const useStoreState = () => {
       logAudit('DIEU_CHINH', 'Phần việc giao ngoài', editId, undefined, { mo_ta: old?.workDescription, tu: old?.startDate, den: old?.dueDate }, { mo_ta: data.workDescription, tu: data.startDate, den: data.dueDate });
       return ok('Đã lưu phần việc giao.');
     }
+    // Chỉ giao cho đội đã khoán vào dự án
+    const projOf = projects.find(p => p.id === data.projectId);
+    if (projOf && !(projOf.externalTeams || []).some(x => x.contractorId === c.id)) return fail(`${c.companyName} chưa khoán vào dự án ${projOf.code}. Thêm đội ở Sửa thông tin dự án (Đội khoán ngoài) trước khi giao việc.`);
     // Một đội chỉ có một phần việc còn hiệu lực trong một công việc: giao lại thì cập nhật phần việc cũ
     const dup = externalAssignments.find(e => e.status === 'HIEU_LUC' && e.taskId === t.id && e.contractorId === c.id);
     if (dup) {
@@ -927,6 +930,7 @@ const useStoreState = () => {
     const e = externalAssignments.find(x => x.id === extId);
     if (!e) return fail('Không tìm thấy phần việc.');
     if (e.status !== 'HIEU_LUC') return fail('Phần việc giao ngoài đã hủy, không cập nhật nhân sự được.');
+    if (!e.taskId) return fail('Khoán theo dự án chỉ để theo dõi đội và số người; nhân sự theo ngày được báo theo phần việc giao của từng công việc.');
     if (!row.date || row.date < e.startDate.slice(0, 10) || row.date > e.dueDate.slice(0, 10)) return fail('Ngày cập nhật phải nằm trong thời gian đội ngoài làm việc.');
     if (row.date > queryTime().slice(0, 10)) return fail('Không thể cập nhật cho ngày chưa đến.');
     if (row.presentCount < 0 || row.presentCount > 200 || isNaN(row.presentCount)) return fail('Số nhân sự có mặt phải từ 0 đến 200.');
@@ -982,6 +986,7 @@ const useStoreState = () => {
     const e = externalAssignments.find(x => x.id === extId);
     const d = e && (e.dailyStaffing || []).find(x => x.date === date);
     if (!e || !d) return fail('Không tìm thấy bản ghi nhân sự ngày này.');
+    if (!e.taskId) return fail('Khoán theo dự án chỉ để theo dõi; hãy xác nhận nhân sự ở phần việc giao của công việc.');
     if (isNaN(count) || count < 0 || count > 200) return fail('Số nhân sự có mặt phải từ 0 đến 200.');
     if ((managerNote || '').length > 500) return fail('Nhận xét tối đa 500 ký tự.');
     const now = nowDb();
@@ -997,7 +1002,7 @@ const useStoreState = () => {
 
   /** Các ngày đội trưởng đã báo nhưng Quản lý chưa xác nhận (trong phạm vi dự án của người dùng) */
   const pendingDailyConfirmations = () => externalAssignments
-    .filter(e => visibleProjectIds.has(e.projectId || tasks.find(t => t.id === e.taskId)?.projectId || ''))
+    .filter(e => !!e.taskId && visibleProjectIds.has(e.projectId || tasks.find(t => t.id === e.taskId)?.projectId || ''))
     .flatMap(e => (e.dailyStaffing || []).filter(d => !d.confirmed && d.reportedBy).map(d => ({ ext: e, day: d })))
     .sort((a, b) => b.day.date.localeCompare(a.day.date));
 

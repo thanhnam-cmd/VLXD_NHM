@@ -7,7 +7,7 @@ import { formatDate, formatDateTime, toDbDateTime, toTime, daysBetween, workingD
 import { useToast, Modal, Drawer, Label, Hint, ErrorBox, inputCls, btnPrimary, btnSecondary, ConfirmDialog } from '../components/ui.tsx';
 import { Plus, Search } from 'lucide-react';
 import { SearchSelect } from '../components/inputs.tsx';
-import { ConfirmDailyModal, DayConfirmBadge, STAFF_STATUS_LABEL } from '../components/ExternalDailyDialogs.tsx';
+import { ConfirmDailyModal, DayConfirmBadge, STAFF_STATUS_LABEL, isProjectKhoan, pendingStaffDays } from '../components/ExternalDailyDialogs.tsx';
 import { staffStatusOf } from '../state/store.tsx';
 import { Field, ctlCls } from '../components/reportKit.tsx';
 
@@ -92,6 +92,8 @@ const ExternalAssignModal: React.FC<{ ext?: ExternalAssignment; onClose: () => v
   const [notes, setNotes] = useState(ext?.notes || '');
   const [err, setErr] = useState<string | null>(null);
   const task = tasks.find(t => t.id === taskId);
+  // Chỉ giao cho đội đã khoán vào dự án (khoán theo dự án cho biết đội nào, bao nhiêu người)
+  const links = visibleProjects.find(p => p.id === projectId)?.externalTeams || [];
   return (
     <Modal title={ext ? 'Sửa phần việc giao' : 'Giao phần việc cho đội thi công ngoài'} onClose={onClose} size="lg"
       footer={<>
@@ -113,14 +115,15 @@ const ExternalAssignModal: React.FC<{ ext?: ExternalAssignment; onClose: () => v
       <div className="grid grid-cols-2 gap-3">
         <div>
           <Label required>Đội thi công ngoài</Label>
-          <select value={contractorId} onChange={e => setContractorId(e.target.value)} className={inputCls}>
-            <option value="">-- Chọn đơn vị --</option>
-            {subcontractors.filter(s => s.status === 'HOP_TAC' || s.id === contractorId).map(s => <option key={s.id} value={s.id}>{s.companyName}</option>)}
+          <select value={contractorId} onChange={e => { setContractorId(e.target.value); const l = links.find(x => x.contractorId === e.target.value); if (l && !workers) setWorkers(String(l.workerCount)); }} disabled={!projectId} className={inputCls}>
+            <option value="">{projectId ? '-- Chọn đội khoán của dự án --' : '-- Chọn dự án trước --'}</option>
+            {subcontractors.filter(s => (s.status === 'HOP_TAC' && links.some(l => l.contractorId === s.id)) || s.id === contractorId).map(s => <option key={s.id} value={s.id}>{s.companyName}{links.find(l => l.contractorId === s.id) ? ` (khoán ${links.find(l => l.contractorId === s.id)!.workerCount} người)` : ''}</option>)}
           </select>
+          {projectId && links.length === 0 && <Hint>Dự án chưa có đội khoán ngoài. Thêm đội ở "Sửa thông tin" dự án rồi giao việc.</Hint>}
         </div>
         <div>
           <Label required>Dự án</Label>
-          <select value={projectId} onChange={e => { setProjectId(e.target.value); setTaskId(''); }} className={inputCls}>
+          <select value={projectId} onChange={e => { setProjectId(e.target.value); setTaskId(''); if (!ext) setContractorId(''); }} className={inputCls}>
             <option value="">-- Chọn dự án --</option>
             {visibleProjects.filter(p => ['LAP_KE_HOACH', 'DANG_THUC_HIEN', 'TAM_DUNG'].includes(p.status)).map(p => <option key={p.id} value={p.id}>{p.code} – {p.name}</option>)}
           </select>
@@ -244,8 +247,10 @@ export const ExternalDetailDrawer: React.FC<{ extId: string; onClose: () => void
   const prog = staffingProgress(ext);
   const isLead = isTeamLeadRole(currentUser);
   const isManager = canOperate(currentUser);
-  // Phần việc khoán theo dự án: mọi đội trưởng có công việc trong dự án đều cập nhật được nhân sự theo ngày
-  const isCoordinator = isLead && (currentUser.staffId === ext.nmhCoordinatorId || !ext.taskId);
+  const khoan = isProjectKhoan(ext);
+  const isCoordinator = isLead && currentUser.staffId === ext.nmhCoordinatorId;
+  // Khoán theo dự án: liệt kê các phần việc của cùng đội được giao theo công việc trong dự án (nơi báo nhân sự theo ngày)
+  const taskParts = khoan ? externalAssignments.filter(e => e.taskId && e.contractorId === ext.contractorId && (e.projectId || tasks.find(x => x.id === e.taskId)?.projectId) === p?.id) : [];
   return (
     <Drawer title={ext.contractorName} subtitle={<span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${st.cls}`}>{st.label}</span>} onClose={onClose} width="max-w-2xl">
       <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/60 space-y-1">
@@ -260,12 +265,30 @@ export const ExternalDetailDrawer: React.FC<{ extId: string; onClose: () => void
         <div className="text-slate-600">Nhân sự NMH phối hợp: <strong>{staff.find(s => s.id === ext.nmhCoordinatorId)?.name}</strong></div>
         {ext.status === 'HUY' && <div className="text-red-600">Lý do hủy: {ext.cancelReason}</div>}
       </div>
+      {khoan && (
+        <div className="p-3 rounded-xl border border-purple-200 bg-purple-50/40 space-y-2">
+          <div className="text-[11px] text-purple-900">Khoán theo dự án chỉ để theo dõi đội và số người. Nhân sự theo ngày được đội trưởng báo và Quản lý xác nhận ở <strong>phần việc giao theo công việc</strong> bên dưới.</div>
+          {taskParts.length === 0 ? <div className="text-[11px] text-slate-500">Đội chưa được giao phần việc nào theo công việc trong dự án.</div> : taskParts.map(e => {
+            const tt = tasks.find(x => x.id === e.taskId);
+            const pg = staffingProgress(e);
+            const n = pendingStaffDays(e).length;
+            return (
+              <div key={e.id} className={`flex items-center justify-between gap-2 text-[11px] ${e.status === 'HUY' ? 'opacity-60' : ''}`}>
+                <span><strong>{tt?.code}</strong> · {tt?.title} · <span className="font-mono">{formatDate(e.startDate)} – {formatDate(e.dueDate)}</span> · {e.workerCount ?? '—'} người{e.status === 'HUY' ? ' · đã hủy' : ''}</span>
+                <span className="whitespace-nowrap text-slate-600">Đã cập nhật {pg.x}/{pg.y} ngày{n > 0 && <span className="ml-1 px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 font-bold">{n} chờ xác nhận</span>}</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
       <div className="flex items-center justify-between">
+        {khoan ? <span className="text-[11px] text-slate-500 font-semibold">Lịch sử báo nhân sự trước đây (chỉ xem)</span> : (
         <span className="text-[11px] px-2 py-0.5 rounded-full bg-blue-50 text-blue-800 font-bold border border-blue-200">
           {`Đã cập nhật ${prog.x}/${prog.y} ngày`}{toTime(DEMO_QUERY_TIME) < toTime(ext.startDate) ? ' · chưa đến ngày làm việc' : ''}
         </span>
+        )}
         <div className="flex gap-2">
-          {ext.status === 'HIEU_LUC' && (isManager || isCoordinator) && !isDirectorRole(currentUser) && (
+          {ext.status === 'HIEU_LUC' && !khoan && (isManager || isCoordinator) && !isDirectorRole(currentUser) && (
             <button type="button" onClick={() => setDaily(true)} className="px-3 py-1.5 rounded-lg bg-[#152A55] text-white font-semibold cursor-pointer">{isLead ? 'Báo nhân sự trong ngày' : 'Nhập / xác nhận nhân sự'}</button>
           )}
           {ext.status === 'HIEU_LUC' && isManager && (
@@ -280,13 +303,13 @@ export const ExternalDetailDrawer: React.FC<{ extId: string; onClose: () => void
         <tbody className="divide-y divide-slate-100">
           {(ext.dailyStaffing || []).length === 0 ? <tr><td colSpan={5} className="py-3 text-center text-slate-400">Chưa có bản ghi nhân sự theo ngày.</td></tr> :
             [...(ext.dailyStaffing || [])].sort((a, b) => a.date.localeCompare(b.date)).map(d => (
-              <tr key={d.date} className={!d.confirmed && d.reportedBy ? 'bg-amber-50/50' : ''}>
+              <tr key={d.date} className={!d.confirmed && d.reportedBy && !khoan ? 'bg-amber-50/50' : ''}>
                 <td className="py-2 pr-2 font-mono">{formatDate(d.date)}</td>
                 <td className="py-2 pr-2">{d.reportedBy ? <><strong>{d.reportedCount ?? d.presentCount}</strong>{d.reportedStatus && <span className={`ml-1 text-[10px] px-1.5 py-0.5 rounded font-bold ${STAFF_STATUS_LABEL[d.reportedStatus]?.cls}`}>{STAFF_STATUS_LABEL[d.reportedStatus]?.label}</span>}<div className="text-[10px] text-slate-500">{d.reportedBy}</div></> : <span className="text-slate-400">—</span>}</td>
                 <td className="py-2 pr-2 font-bold">{d.confirmed ? d.presentCount : <span className="text-slate-400 font-normal">chưa chốt</span>}</td>
                 <td className="py-2 pr-2">{d.reportNote || d.content || '—'}{d.names && <div className="text-[10px] text-slate-500">{d.names}</div>}{d.managerNote && <div className="text-[11px] text-emerald-800 mt-0.5">QL: {d.managerNote}</div>}</td>
-                <td className="py-2 pr-2"><DayConfirmBadge d={d} />{d.confirmed && <div className="text-[10px] text-slate-500 mt-0.5">{d.confirmedBy}</div>}</td>
-                {isManager && <td className="py-2 text-right">{ext.status === 'HIEU_LUC' && <button type="button" onClick={() => setConfirmDate(d.date)} className={`px-2 py-1 rounded font-semibold cursor-pointer ${d.confirmed ? 'text-blue-700 hover:bg-blue-50' : 'bg-purple-700 text-white'}`}>{d.confirmed ? 'Sửa' : 'Xác nhận'}</button>}</td>}
+                <td className="py-2 pr-2"><DayConfirmBadge d={d} closed={khoan} />{d.confirmed && <div className="text-[10px] text-slate-500 mt-0.5">{d.confirmedBy}</div>}</td>
+                {isManager && <td className="py-2 text-right">{ext.status === 'HIEU_LUC' && !khoan && <button type="button" onClick={() => setConfirmDate(d.date)} className={`px-2 py-1 rounded font-semibold cursor-pointer ${d.confirmed ? 'text-blue-700 hover:bg-blue-50' : 'bg-purple-700 text-white'}`}>{d.confirmed ? 'Sửa' : 'Xác nhận'}</button>}</td>}
               </tr>
             ))}
         </tbody>
@@ -324,7 +347,7 @@ export const ExternalTeamsTab: React.FC<{ initialFilter?: string }> = ({ initial
   const exts = scoped.externalAssignments.filter(e => {
     const pid = e.projectId || tasks.find(t => t.id === e.taskId)?.projectId;
     if (fProject && pid !== fProject) return false;
-    const pendingDays = (e.dailyStaffing || []).filter(d => !d.confirmed && d.reportedBy).length;
+    const pendingDays = pendingStaffDays(e).length;
     if (fState === 'PENDING' ? pendingDays === 0 : fState && externalState(e).key !== fState) return false;
     if (fTeam && e.contractorId !== fTeam) return false;
     if (fKind === 'TASK' && !e.taskId) return false;
@@ -429,18 +452,20 @@ export const ExternalTeamsTab: React.FC<{ initialFilter?: string }> = ({ initial
                   <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${st.cls}`}>{st.label}</span>
                 </div>
                 {(() => {
-                  const n = (e.dailyStaffing || []).filter(d => !d.confirmed && d.reportedBy).length;
+                  const n = pendingStaffDays(e).length;
                   return n > 0 ? <div className="inline-block text-[10px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 font-bold">{n} ngày chờ Quản lý xác nhận nhân sự</div> : null;
                 })()}
                 <div className="font-mono text-[11px] text-slate-600">{t ? `${t.code} · ${p?.code}` : `${p?.code} · khoán theo dự án`}</div>
                 <div className="font-semibold text-slate-800">{t?.title || p?.name}</div>
                 <div className="text-slate-600">{e.workDescription}</div>
                 <div className="font-mono text-slate-500">{formatDate(e.startDate)} – {formatDate(e.dueDate)} ({prog.total} ngày làm việc)</div>
-                <div className="text-slate-500">{`Đã cập nhật ${prog.x}/${prog.y} ngày`}{st.key === 'SAP' ? ' · chưa đến ngày làm việc' : ''}</div>
+                {isProjectKhoan(e)
+                  ? <div className="text-purple-800">Chỉ theo dõi đội và số người · nhân sự theo ngày báo ở phần việc theo công việc</div>
+                  : <div className="text-slate-500">{`Đã cập nhật ${prog.x}/${prog.y} ngày`}{st.key === 'SAP' ? ' · chưa đến ngày làm việc' : ''}</div>}
                 <div className="text-slate-600">Số người dự kiến: {e.workerCount ?? '—'} · Giá trị khoán dự kiến: <strong>{money(e.contractValue)}</strong></div>
                 <div className="text-slate-600">Nhân sự NMH phối hợp: {staff.find(s => s.id === e.nmhCoordinatorId)?.name}</div>
                 <div className="flex gap-2 pt-1" onClick={ev => ev.stopPropagation()}>
-                  <button type="button" onClick={() => setDetailId(e.id)} className="px-2.5 py-1 rounded-lg bg-white border border-slate-300 font-semibold cursor-pointer">Nhân sự theo ngày</button>
+                  <button type="button" onClick={() => setDetailId(e.id)} className="px-2.5 py-1 rounded-lg bg-white border border-slate-300 font-semibold cursor-pointer">{isProjectKhoan(e) ? 'Xem chi tiết' : 'Nhân sự theo ngày'}</button>
                   {isManager && e.status === 'HIEU_LUC' && <button type="button" onClick={() => setCancelExt(e)} className="px-2.5 py-1 rounded-lg border border-red-200 text-red-600 font-semibold cursor-pointer">Hủy phần việc</button>}
                 </div>
               </div>

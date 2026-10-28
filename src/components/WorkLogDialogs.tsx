@@ -483,8 +483,8 @@ export const WorkLogCard: React.FC<{
                   {r.note && <span className="text-slate-600"> – {r.note}</span>}
                   {d?.confirmed && <div className="text-emerald-800 mt-0.5">Quản lý xác nhận <strong>{d.presentCount} người</strong>{d.managerNote ? `: ${d.managerNote}` : ''}</div>}
                 </div>
-                <DayConfirmBadge d={d} />
-                {canConfirm && e && d && !d.confirmed && (
+                <DayConfirmBadge d={d} closed={!!e && !e.taskId} />
+                {canConfirm && e && e.taskId && d && !d.confirmed && (
                   <button type="button" onClick={() => setConfirmFor({ extId: e.id, date: day })} className="px-2.5 py-1 rounded-md bg-purple-700 text-white font-semibold cursor-pointer">Xác nhận</button>
                 )}
               </div>

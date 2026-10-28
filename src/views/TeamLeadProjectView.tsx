@@ -56,10 +56,13 @@ export const TeamLeadProjectView: React.FC<Props> = ({ projectId, onBack, onSend
   const myDocs = docs.filter(d => d.projectId === project.id && (d.scope !== 'RIENG_CONG_VIEC' || myTasks.some(t => t.id === d.taskId)))
     .filter(d => !docType || d.type === docType);
 
-  // Đội ngoài phối hợp: phần việc mình phối hợp, phần việc thuộc công việc của mình, và đội khoán theo dự án
-  const myExternals = externalAssignments.filter(e => e.status === 'HIEU_LUC'
+  // Đội ngoài phối hợp: phần việc giao theo công việc mình phụ trách hoặc mình phối hợp
+  // (khoán theo dự án chỉ hiện ở đầu trang: đội nào, bao nhiêu người; nhân sự theo ngày báo theo công việc)
+  const myExternals = externalAssignments.filter(e => e.status === 'HIEU_LUC' && !!e.taskId
     && (e.projectId || tasks.find(t => t.id === e.taskId)?.projectId) === project.id
-    && (!e.taskId || e.nmhCoordinatorId === currentUser.staffId || myTasks.some(t => t.id === e.taskId)));
+    && (e.nmhCoordinatorId === currentUser.staffId || myTasks.some(t => t.id === e.taskId)));
+  // Đội ngoài được giao làm trong ngày đã chọn (hiện cùng bảng nhân sự trong ngày)
+  const dayExts = myExternals.filter(e => e.startDate.slice(0, 10) <= day && e.dueDate.slice(0, 10) >= day);
 
   return (
     <div className="space-y-6">
@@ -149,7 +152,7 @@ export const TeamLeadProjectView: React.FC<Props> = ({ projectId, onBack, onSend
             <tr><th className="py-2 pr-3">Nhân sự</th><th className="py-2 pr-3">Chức danh và chuyên môn</th><th className="py-2 pr-3">Số điện thoại</th><th className="py-2 pr-3">Công việc</th><th className="py-2">Giờ làm việc</th></tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
-            {dayRows.length === 0 ? <tr><td colSpan={5} className="py-4 text-center text-slate-400">Không có nhân sự được phân công trong ngày này.</td></tr> : dayRows.map(({ a, from, to }) => {
+            {dayRows.length === 0 && dayExts.length === 0 ? <tr><td colSpan={5} className="py-4 text-center text-slate-400">Không có nhân sự được phân công trong ngày này.</td></tr> : dayRows.map(({ a, from, to }) => {
               const s = staff.find(x => x.id === a.staffId);
               const t = tasks.find(x => x.id === a.taskId);
               return (
@@ -159,6 +162,22 @@ export const TeamLeadProjectView: React.FC<Props> = ({ projectId, onBack, onSend
                   <td className="py-2 pr-3 font-mono">{s?.phone}</td>
                   <td className="py-2 pr-3">{t?.code} · {t?.title}</td>
                   <td className="py-2 font-mono">{from} – {to}</td>
+                </tr>
+              );
+            })}
+            {dayExts.map(e => {
+              const t = tasks.find(x => x.id === e.taskId);
+              const sub = subcontractors.find(s => s.id === e.contractorId);
+              const d = (e.dailyStaffing || []).find(x => x.date === day);
+              return (
+                <tr key={e.id} className="bg-purple-50/40">
+                  <td className="py-2 pr-3 font-semibold text-purple-900"><Building2 className="w-3.5 h-3.5 inline -mt-0.5 mr-1 text-purple-500" />{e.contractorName}</td>
+                  <td className="py-2 pr-3">Đội thi công ngoài · {e.workerCount ?? '—'} người theo kế hoạch{sub?.contactPerson ? ` · Đầu mối: ${sub.contactPerson}` : ''}</td>
+                  <td className="py-2 pr-3 font-mono">{sub?.phone}</td>
+                  <td className="py-2 pr-3">{t?.code} · {t?.title}</td>
+                  <td className="py-2">
+                    {d ? <span className="whitespace-nowrap">Báo <strong>{d.reportedCount ?? d.presentCount}</strong> người <DayConfirmBadge d={d} />{d.confirmed && <> <strong>{d.presentCount}</strong> người</>}</span> : <DayConfirmBadge />}
+                  </td>
                 </tr>
               );
             })}

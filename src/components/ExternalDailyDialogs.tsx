@@ -10,9 +10,16 @@ export const STAFF_STATUS_LABEL: Record<string, { label: string; cls: string }> 
   THUA: { label: 'Thừa', cls: 'bg-amber-100 text-amber-800' }
 };
 
+/** Khoán theo dự án chỉ để theo dõi (đội nào, bao nhiêu người); nhân sự theo ngày báo theo phần việc giao của công việc */
+export const isProjectKhoan = (e: ExternalAssignment) => !e.taskId;
+
+/** Các ngày đội trưởng đã báo chờ Quản lý xác nhận (khoán theo dự án không còn nhận báo nên không tính) */
+export const pendingStaffDays = (e: ExternalAssignment) => isProjectKhoan(e) ? [] : (e.dailyStaffing || []).filter(d => !d.confirmed && d.reportedBy);
+
 /** Nhãn trạng thái xác nhận của một ngày */
-export const DayConfirmBadge: React.FC<{ d?: ExternalDailyStaffing }> = ({ d }) => {
+export const DayConfirmBadge: React.FC<{ d?: ExternalDailyStaffing; closed?: boolean }> = ({ d, closed }) => {
   if (!d) return <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 font-semibold">Chưa báo</span>;
+  if (!d.confirmed && closed) return <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 font-semibold whitespace-nowrap" title="Khoán theo dự án không còn nhận báo nhân sự; số người báo theo phần việc giao của công việc">Đã đóng</span>;
   return d.confirmed
     ? <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-semibold whitespace-nowrap">QL đã xác nhận</span>
     : <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 font-semibold whitespace-nowrap">Chờ QL xác nhận</span>;

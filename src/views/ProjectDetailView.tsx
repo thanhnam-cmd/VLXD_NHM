@@ -192,11 +192,10 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
                 Đội khoán ngoài:
                 {(project.externalTeams || []).map(x => {
                   const pe = externalAssignments.find(e => !e.taskId && e.projectId === project.id && e.contractorId === x.contractorId && e.status === 'HIEU_LUC');
-                  const pending = (pe?.dailyStaffing || []).filter(d => !d.confirmed && d.reportedBy).length;
                   return (
-                    <button key={x.contractorId} type="button" disabled={!pe} onClick={() => pe && setExtDrawer(pe.id)} title={pe ? 'Xem và xác nhận nhân sự theo ngày' : undefined}
-                      className={`px-2 py-0.5 rounded-full border font-semibold ${pending ? 'bg-amber-100 border-amber-300 text-amber-900' : 'bg-purple-50 border-purple-200 text-purple-800'} ${pe ? 'cursor-pointer hover:underline' : ''}`}>
-                      {store.subcontractors.find(c => c.id === x.contractorId)?.companyName || 'Đội đã xóa'} · {x.workerCount} người{pending ? ` · ${pending} ngày chờ xác nhận` : ''}
+                    <button key={x.contractorId} type="button" disabled={!pe} onClick={() => pe && setExtDrawer(pe.id)} title={pe ? 'Xem đội khoán và các phần việc được giao theo công việc' : undefined}
+                      className={`px-2 py-0.5 rounded-full border font-semibold bg-purple-50 border-purple-200 text-purple-800 ${pe ? 'cursor-pointer hover:underline' : ''}`}>
+                      {store.subcontractors.find(c => c.id === x.contractorId)?.companyName || 'Đội đã xóa'} · {x.workerCount} người
                     </button>
                   );
                 })}

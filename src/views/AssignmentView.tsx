@@ -435,10 +435,8 @@ export const AssignmentView: React.FC<AssignmentViewProps> = ({ initialTab, init
                               ))}
                             </optgroup>
                           )}
-                          <optgroup label="Đội thi công ngoài khác">
-                            {subcontractors.filter(x => x.status === 'HOP_TAC' && !(selectedProject?.externalTeams || []).some(l => l.contractorId === x.id)).map(x => <option key={x.id} value={x.id}>{x.companyName}</option>)}
-                          </optgroup>
                         </select>
+                        {(selectedProject?.externalTeams || []).length === 0 && <Hint>Dự án chưa có đội khoán ngoài. Thêm đội ở "Sửa thông tin" dự án (mục Đội khoán ngoài) rồi giao việc.</Hint>}
                       </div>
                       <div>
                         <Label required>Số người hỗ trợ</Label>
