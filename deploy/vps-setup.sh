@@ -75,8 +75,7 @@ fi
 DB_URL_LOCAL="$(grep '^DATABASE_URL=' "$APP_DIR/.env" | cut -d= -f2- | sed 's/?sslmode=disable//')"
 
 if [ -z "${SOURCE_DATABASE_URL:-}" ] && [ -n "${SOURCE_DATABASE_URL_FILE:-}" ]; then
-  SOURCE_DATABASE_URL="$(tr -d '
- ' < "$SOURCE_DATABASE_URL_FILE")"
+  SOURCE_DATABASE_URL="$(tr -d '\r\n ' < "$SOURCE_DATABASE_URL_FILE")"
   [ -n "$SOURCE_DATABASE_URL" ] || { echo "!! File $SOURCE_DATABASE_URL_FILE trống"; exit 1; }
 fi
 if [ "${RESET_DB:-0}" = 1 ]; then
