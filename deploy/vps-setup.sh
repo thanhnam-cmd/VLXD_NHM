@@ -5,6 +5,7 @@
 #   DOMAIN=thanhnganhm.vnc360.com EMAIL=ban@example.com bash vps-setup.sh
 # Dữ liệu (chỉ dùng khi CSDL trên VPS chưa có hoặc khi có RESET_DB=1):
 #   SOURCE_DATABASE_URL='<External Database URL của Render>'  – sao chép toàn bộ dữ liệu thật từ Render sang VPS
+#   SOURCE_DATABASE_URL_FILE=/root/.render_db_url  – như trên nhưng đọc URL từ file (không lộ trên màn hình/lịch sử lệnh)
 #   DUMP_FILE=/root/vlxd.dump  – hoặc khôi phục từ file sao lưu (pg_dump -Fc hoặc .sql)
 #   Không có hai biến trên: tạo CSDL mới từ database/nmh_postgres_full.sql (dữ liệu mẫu).
 #   RESET_DB=1 – xóa CSDL trên VPS và nạp lại (dùng khi chuyển dữ liệu lần cuối trước khi dùng VPS chính thức).
@@ -73,6 +74,11 @@ EOF
 fi
 DB_URL_LOCAL="$(grep '^DATABASE_URL=' "$APP_DIR/.env" | cut -d= -f2- | sed 's/?sslmode=disable//')"
 
+if [ -z "${SOURCE_DATABASE_URL:-}" ] && [ -n "${SOURCE_DATABASE_URL_FILE:-}" ]; then
+  SOURCE_DATABASE_URL="$(tr -d '
+ ' < "$SOURCE_DATABASE_URL_FILE")"
+  [ -n "$SOURCE_DATABASE_URL" ] || { echo "!! File $SOURCE_DATABASE_URL_FILE trống"; exit 1; }
+fi
 if [ "${RESET_DB:-0}" = 1 ]; then
   log "RESET_DB=1: xóa CSDL $DB_NAME trên VPS để nạp lại"
   systemctl stop nmh 2>/dev/null || true
