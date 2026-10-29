@@ -3,10 +3,12 @@
 # Chạy bằng root trên VPS:
 #   curl -fsSL https://raw.githubusercontent.com/thanhnam-cmd/VLXD_NHM/main/deploy/vps-setup.sh -o vps-setup.sh
 #   DOMAIN=thanhnganhm.vnc360.com EMAIL=ban@example.com bash vps-setup.sh
-# Tùy chọn:
-#   DUMP_FILE=/root/vlxd.dump  – khôi phục dữ liệu cũ (bản sao lưu từ Render, định dạng pg_dump -Fc hoặc .sql)
-#   Không có DUMP_FILE: tạo CSDL mới từ database/nmh_postgres_full.sql (dữ liệu mẫu).
-# Chạy lại script để cập nhật bản mới nhất từ GitHub (không đụng vào dữ liệu).
+# Dữ liệu (chỉ dùng khi CSDL trên VPS chưa có hoặc khi có RESET_DB=1):
+#   SOURCE_DATABASE_URL='<External Database URL của Render>'  – sao chép toàn bộ dữ liệu thật từ Render sang VPS
+#   DUMP_FILE=/root/vlxd.dump  – hoặc khôi phục từ file sao lưu (pg_dump -Fc hoặc .sql)
+#   Không có hai biến trên: tạo CSDL mới từ database/nmh_postgres_full.sql (dữ liệu mẫu).
+#   RESET_DB=1 – xóa CSDL trên VPS và nạp lại (dùng khi chuyển dữ liệu lần cuối trước khi dùng VPS chính thức).
+# Chạy lại script không kèm các biến trên để cập nhật bản mới nhất từ GitHub (dữ liệu giữ nguyên).
 set -euo pipefail
 
 DOMAIN="${DOMAIN:?Thiếu DOMAIN, ví dụ DOMAIN=thanhnganhm.vnc360.com}"
@@ -24,7 +26,16 @@ log() { echo -e "\n==> $*"; }
 log "Cài gói hệ thống"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
-apt-get install -y ca-certificates curl git nginx postgresql postgresql-contrib certbot python3-certbot-nginx ufw
+apt-get install -y ca-certificates curl git gnupg nginx certbot python3-certbot-nginx ufw
+# PostgreSQL 18 từ kho chính thức: pg_dump 18 sao chép được CSDL Render ở mọi phiên bản
+if [ ! -f /etc/apt/sources.list.d/pgdg.list ]; then
+  . /etc/os-release
+  install -d /usr/share/postgresql-common/pgdg
+  curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
+  echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt ${VERSION_CODENAME}-pgdg main" > /etc/apt/sources.list.d/pgdg.list
+  apt-get update -y
+fi
+apt-get install -y postgresql-18 postgresql-client-18
 if ! command -v node >/dev/null || [ "$(node -v | cut -d. -f1 | tr -d v)" -lt 22 ]; then
   curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
   apt-get install -y nodejs
@@ -62,11 +73,29 @@ EOF
 fi
 DB_URL_LOCAL="$(grep '^DATABASE_URL=' "$APP_DIR/.env" | cut -d= -f2- | sed 's/?sslmode=disable//')"
 
+if [ "${RESET_DB:-0}" = 1 ]; then
+  log "RESET_DB=1: xóa CSDL $DB_NAME trên VPS để nạp lại"
+  systemctl stop nmh 2>/dev/null || true
+  sudo -u postgres dropdb --if-exists "$DB_NAME"
+  sudo -u postgres createdb -O "$DB_USER" "$DB_NAME"
+  NEW_DB=1
+fi
+if [ "$NEW_DB" = 0 ] && { [ -n "${SOURCE_DATABASE_URL:-}" ] || [ -n "${DUMP_FILE:-}" ]; }; then
+  echo "!! CSDL $DB_NAME trên VPS đã có dữ liệu nên không nạp đè. Muốn nạp lại thì thêm RESET_DB=1."
+  exit 1
+fi
+
 if [ "$NEW_DB" = 1 ]; then
+  if [ -n "${SOURCE_DATABASE_URL:-}" ]; then
+    DUMP_FILE="/root/vlxd-render-$(date +%Y%m%d-%H%M%S).dump"
+    log "Sao chép dữ liệu từ CSDL Render vào $DUMP_FILE"
+    pg_dump -Fc --no-owner --no-acl -f "$DUMP_FILE" "$SOURCE_DATABASE_URL"
+    chmod 600 "$DUMP_FILE"
+  fi
   if [ -n "${DUMP_FILE:-}" ]; then
     log "Khôi phục dữ liệu từ $DUMP_FILE"
     if head -c 5 "$DUMP_FILE" | grep -q PGDMP; then
-      pg_restore --no-owner --no-acl -d "$DB_URL_LOCAL" "$DUMP_FILE"
+      pg_restore --no-owner --no-acl --no-comments --single-transaction --exit-on-error -d "$DB_URL_LOCAL" "$DUMP_FILE"
     else
       psql -v ON_ERROR_STOP=1 "$DB_URL_LOCAL" -f "$DUMP_FILE"
     fi
